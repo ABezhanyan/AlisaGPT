@@ -1,0 +1,23 @@
+[Unit]
+Description=AlisaGPT Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=alisagpt
+Group=alisagpt
+WorkingDirectory=/opt/alisagpt
+ExecStart=/opt/alisagpt/.venv/bin/python -m app bot
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/alisagpt/data
+
+[Install]
+WantedBy=multi-user.target
+

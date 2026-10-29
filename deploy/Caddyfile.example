@@ -1,0 +1,9 @@
+your-domain.example {
+    @app path /healthz /alice/*
+    handle @app {
+        reverse_proxy 127.0.0.1:8000
+    }
+    handle {
+        respond 404
+    }
+}
