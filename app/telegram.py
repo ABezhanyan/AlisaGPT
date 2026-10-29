@@ -1,0 +1,166 @@
+"""Private Telegram control panel and chat for the configured owner."""
+
+import logging
+import os
+import ssl
+
+from aiogram import Bot, Dispatcher, F
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.filters import Command
+from aiogram.filters.command import CommandObject
+from aiogram.types import Message
+
+from app.assistant import UserError
+
+
+logger = logging.getLogger(__name__)
+
+
+def bot_session():
+    session = AiohttpSession(
+        proxy=os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+    )
+    # aiogram has no public TLS-context option; preserve the platform's CA bundle
+    # through this compatibility hook after proxy connector initialization.
+    session._connector_init["ssl"] = ssl.create_default_context(
+        cafile=os.environ.get("SSL_CERT_FILE") or None
+    )
+    return session
+
+HELP = """Я — ваш помощник и панель управления навыком Алисы.
+
+/link — получить одноразовый код привязки Станции
+/unlink — отвязать Алису и аннулировать коды привязки
+/model <модель> — выбрать модель
+/prompt <инструкция> — задать стиль ответов
+/limit <число> — установить дневной лимит запросов
+/usage — настройки и расход запросов за сегодня
+/reset — очистить общую историю диалога
+/help — показать команды
+
+Или просто напишите сообщение: история общая с привязанной Алисой."""
+
+
+async def run_bot(settings, store, assistant):
+    """Run long polling; do not call until Telegram credentials are configured."""
+    if not settings.telegram_bot_token or settings.telegram_owner_id <= 0:
+        raise ValueError("Configure TELEGRAM_BOT_TOKEN and TELEGRAM_OWNER_ID first")
+
+    dispatcher = Dispatcher()
+
+    def owner(message: Message) -> str | None:
+        if (
+            message.chat.type == "private"
+            and message.from_user
+            and message.from_user.id == settings.telegram_owner_id
+        ):
+            return str(message.from_user.id)
+        return None
+
+    async def send(message: Message, text: str):
+        # Telegram allows 4096 characters per plain-text message.
+        for offset in range(0, len(text), 4000):
+            await message.answer(text[offset : offset + 4000], parse_mode=None)
+
+    @dispatcher.message(Command("start", "help"))
+    async def help_command(message: Message):
+        if owner(message):
+            await message.answer(HELP)
+
+    @dispatcher.message(Command("link"))
+    async def link_command(message: Message):
+        if user_id := owner(message):
+            code = store.create_link_code(user_id)
+            await message.answer(
+                f"Скажите Алисе в навыке: «Привязать {code}». "
+                "Код одноразовый и действует ограниченное время. "
+                "Не передавайте его другим людям."
+            )
+
+    @dispatcher.message(Command("model"))
+    async def model_command(message: Message, command: CommandObject):
+        if not (user_id := owner(message)):
+            return
+        model = (command.args or "").strip()
+        if model not in settings.allowed_models:
+            await message.answer(
+                "Используйте /model <модель>. Доступны: "
+                + ", ".join(settings.allowed_models)
+            )
+            return
+        store.update_settings(user_id, model=model)
+        await message.answer(f"Модель: {model}")
+
+    @dispatcher.message(Command("unlink"))
+    async def unlink_command(message: Message):
+        if user_id := owner(message):
+            store.unlink(user_id)
+            await message.answer("Алиса отвязана. Все коды привязки аннулированы.")
+
+    @dispatcher.message(Command("prompt"))
+    async def prompt_command(message: Message, command: CommandObject):
+        if not (user_id := owner(message)):
+            return
+        prompt = (command.args or "").strip()
+        if not prompt or len(prompt) > 4000:
+            await message.answer("Используйте /prompt <инструкция до 4000 символов>.")
+            return
+        store.update_settings(user_id, prompt=prompt)
+        await message.answer("Инструкция для помощника сохранена.")
+
+    @dispatcher.message(Command("limit"))
+    async def limit_command(message: Message, command: CommandObject):
+        if not (user_id := owner(message)):
+            return
+        try:
+            daily_limit = int((command.args or "").strip())
+            if not 1 <= daily_limit <= 10000:
+                raise ValueError
+        except ValueError:
+            await message.answer("Используйте /limit <целое число от 1 до 10000>.")
+            return
+        store.update_settings(user_id, daily_limit=daily_limit)
+        await message.answer(f"Дневной лимит: {daily_limit} запросов.")
+
+    @dispatcher.message(Command("usage"))
+    async def usage_command(message: Message):
+        if user_id := owner(message):
+            current = store.settings(user_id)
+            await message.answer(
+                f"Модель: {current['model']}\n"
+                f"Запросов сегодня (UTC): {store.usage(user_id)}\n"
+                f"Дневной лимит: {current['daily_limit']}\n"
+                "Это счётчик запросов, не сумма списаний OpenAI."
+            )
+
+    @dispatcher.message(Command("reset"))
+    async def reset_command(message: Message):
+        if user_id := owner(message):
+            store.clear_history(user_id)
+            await message.answer("Общая история Алисы и Telegram очищена.")
+
+    @dispatcher.message(F.text)
+    async def chat(message: Message):
+        if not (user_id := owner(message)):
+            return
+        text = message.text or ""
+        if text.startswith("/"):
+            await message.answer("Неизвестная команда. Список команд: /help")
+            return
+        if len(text) > 4000:
+            await message.answer("Сократите сообщение до 4000 символов.")
+            return
+        try:
+            response = await assistant.reply(user_id, text)
+        except UserError as exc:
+            await send(message, str(exc))
+            return
+        except Exception:
+            # Never send upstream exception details or credentials to Telegram.
+            logger.error("Assistant request failed")
+            await message.answer("Не удалось получить ответ. Попробуйте чуть позже.")
+            return
+        await send(message, response or "Помощник вернул пустой ответ.")
+
+    async with Bot(settings.telegram_bot_token, session=bot_session()) as bot:
+        await dispatcher.start_polling(bot, allowed_updates=["message"])
