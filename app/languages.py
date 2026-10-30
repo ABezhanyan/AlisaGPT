@@ -28,12 +28,27 @@ def requested_language(text):
     phrase = re.sub(r"[.!?։]+$", "", text.strip().lower()).strip()
     phrase = re.sub(r"^(?:пожалуйста[,.]?\s+|please\s+)", "", phrase)
     patterns = (
-        r"(?:теперь\s+)?(?:говори|отвечай|общайся|переключись|давай\s+говорить)(?:\s+со\s+мной)?\s+(?:на\s+|по[-\s]?)?(?P<language>[а-яё]+)(?:\s+языке)?",
+        r"(?:теперь\s+)?(?:говори|ответь|отвечай|общайся|переключись|давай\s+говорить)(?:\s+со\s+мной)?\s+(?:на\s+|по[-\s]?)?(?P<language>[а-яё]+)(?:\s+языке)?",
         r"(?:please\s+)?(?:speak|reply|answer|switch\s+to)(?:\s+in)?\s+(?P<language>english|russian|armenian)",
         r"(?:խոսիր|պատասխանիր|անցիր)\s+(?P<language>հայերեն|անգլերեն|ռուսերեն)",
     )
     for pattern in patterns:
         match = re.fullmatch(pattern, phrase, re.IGNORECASE)
+        if match and (language := parse_language(match.group("language"))):
+            return language
+    return None
+
+
+def answer_language_request(text):
+    """Language explicitly requested for one substantive answer."""
+    phrase = text.strip().lower()
+    patterns = (
+        r"^(?:ответь|скажи|расскажи|объясни|переведи)(?:\s+мне)?\s+(?:на\s+|по[-\s]?)(?P<language>[а-яё]+)(?:\s+языке)?[\s,:—-]+\S.+",
+        r"^(?:answer|reply|say|explain|translate)(?:\s+this)?\s+(?:in|into)\s+(?P<language>english|armenian|russian)[\s,:—-]+\S.+",
+        r"^(?:պատասխանիր|ասա|բացատրիր)\s+(?P<language>հայերեն|անգլերեն|ռուսերեն)[\s,:—-]+\S.+",
+    )
+    for pattern in patterns:
+        match = re.match(pattern, phrase, re.IGNORECASE)
         if match and (language := parse_language(match.group("language"))):
             return language
     return None

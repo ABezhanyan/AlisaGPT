@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timezone
 import httpx
 from .recipes import is_recipe_request, recipe_title
-from .languages import CONFIRMATIONS, LANGUAGE_INSTRUCTIONS, requested_language
+from .languages import CONFIRMATIONS, LANGUAGE_INSTRUCTIONS, answer_language_request, requested_language
 from .web_search import city_reply, clean_voice_answer, has_explicit_city, is_general_news_question, is_weather_question, needs_web_search, parse_web_answer
 
 class UserError(Exception):
@@ -108,12 +108,12 @@ class Assistant:
             raise ValueError("Empty spoken web answer")
         return answer, sources
 
-    async def synthesize_voice(self, user_id, answer):
+    async def synthesize_voice(self, user_id, answer, language=None):
         if not answer or len(answer) > 1600:
             raise UserError("Этот ответ слишком длинный для голосового сообщения.")
         if not self.store.reserve_voice(user_id, self.settings.voice_daily_limit):
             raise UserError("Дневной лимит голосовых сообщений исчерпан.")
-        language = self.store.settings(user_id).get("language", "ru")
+        language = language or self.store.settings(user_id).get("language", "ru")
         style = {
             "ru": "Speak clearly and naturally in Russian.",
             "en": "Speak fluent English with natural pronunciation and pacing.",
@@ -133,6 +133,30 @@ class Assistant:
         except (httpx.HTTPError, ValueError) as exc:
             raise UserError("Не удалось озвучить ответ. Попробуйте позже.") from exc
 
+    async def _send_station_voice(self, user_id, answer, language):
+        if not self.settings.telegram_bot_token or self.settings.telegram_owner_id <= 0:
+            return
+        try:
+            audio = await self.synthesize_voice(user_id, answer, language)
+            response = await self.client.post(
+                f"https://api.telegram.org/bot{self.settings.telegram_bot_token}/sendVoice",
+                data={"chat_id": str(self.settings.telegram_owner_id), "caption": "Ответ со Станции. Голос сгенерирован ИИ."},
+                files={"voice": ("alisagpt.ogg", audio, "audio/ogg")},
+                timeout=15,
+            )
+            response.raise_for_status()
+        except (UserError, httpx.HTTPError) as exc:
+            # The Station answer is already returned; Telegram delivery must not interrupt it.
+            notice = str(exc) if isinstance(exc, UserError) else "Не удалось отправить голосовую копию ответа со Станции."
+            try:
+                await self.client.post(
+                    f"https://api.telegram.org/bot{self.settings.telegram_bot_token}/sendMessage",
+                    json={"chat_id": self.settings.telegram_owner_id, "text": notice},
+                    timeout=8,
+                )
+            except httpx.HTTPError:
+                pass
+
     async def reply(self, user_id, text, channel="voice"):
         if not self.settings.alisagpt_api_key:
             raise UserError("Администратор ещё не подключил OpenAI API.")
@@ -144,7 +168,7 @@ class Assistant:
                 return CONFIRMATIONS[language]
             original_text = text
             profile = self.store.settings(user_id)
-            language = profile.get("language", "ru")
+            language = answer_language_request(text) or profile.get("language", "ru")
             pending_weather = self.store.take_pending_weather(user_id)
             city_was_saved = False
             if pending_weather:
@@ -203,6 +227,10 @@ class Assistant:
             except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
                 raise UserError("Сервис ответа временно недоступен. Попробуйте позже.") from exc
             self.store.add_exchange(user_id, original_text, answer)
+            if channel == "voice" and language != "ru":
+                task = asyncio.create_task(self._send_station_voice(user_id, answer, language))
+                self.delivery_tasks.add(task)
+                task.add_done_callback(self.delivery_tasks.discard)
             if channel == "voice" and is_recipe_request(original_text):
                 title = recipe_title(original_text)
                 recipe_id = self.store.save_recipe(user_id, title, answer)
