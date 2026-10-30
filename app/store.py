@@ -1,4 +1,5 @@
 import hashlib
+import json
 import re
 import secrets
 import sqlite3
@@ -23,6 +24,7 @@ class Store:
         CREATE TABLE IF NOT EXISTS usage(user_id TEXT, day TEXT, count INTEGER, PRIMARY KEY(user_id, day));
         CREATE TABLE IF NOT EXISTS web_usage(user_id TEXT, day TEXT, count INTEGER, PRIMARY KEY(user_id, day));
         CREATE TABLE IF NOT EXISTS pending_weather(user_id TEXT PRIMARY KEY, question TEXT NOT NULL, created REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS web_cache(cache_key TEXT PRIMARY KEY, answer TEXT NOT NULL, sources TEXT NOT NULL, fetched REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS memories(id INTEGER PRIMARY KEY, user_id TEXT NOT NULL, fact TEXT NOT NULL, source TEXT NOT NULL, created REAL NOT NULL, UNIQUE(user_id, fact));
         CREATE INDEX IF NOT EXISTS memories_user ON memories(user_id, created DESC);
         ''')
@@ -111,6 +113,18 @@ class Store:
         with self.db:
             self.db.execute("INSERT OR IGNORE INTO web_usage VALUES(?,?,0)", (user_id, day))
             return self.db.execute("UPDATE web_usage SET count=count+1 WHERE user_id=? AND day=? AND count<?", (user_id, day, limit)).rowcount == 1
+
+    def web_cache(self, cache_key):
+        row = self.db.execute("SELECT answer, sources, fetched FROM web_cache WHERE cache_key=?", (cache_key,)).fetchone()
+        return {"answer": row[0], "sources": json.loads(row[1]), "fetched": row[2]} if row else None
+
+    def save_web_cache(self, cache_key, answer, sources):
+        with self.db:
+            self.db.execute("INSERT OR REPLACE INTO web_cache VALUES(?,?,?,?)", (cache_key, answer, json.dumps(sources), time.time()))
+
+    def known_weather_cities(self):
+        rows = self.db.execute("SELECT DISTINCT substr(fact, length('Город для прогноза погоды: ') + 1) FROM memories WHERE fact LIKE 'Город для прогноза погоды: %'").fetchall()
+        return [row[0] for row in rows if row[0]]
 
     def usage(self, user_id):
         row = self.db.execute("SELECT count FROM usage WHERE user_id=? AND day=?", (user_id,datetime.now(timezone.utc).date().isoformat())).fetchone()

@@ -7,7 +7,7 @@ CURRENT_INFO = re.compile(
     r"расписани|результат(?:ы| матча)|сч[её]т матч|"
     r"\bсегодня\b|\bсейчас\b|\bзавтра\b|"
     r"последн(?:ие|их) событи|свеж(?:ие|их) событи|"
-    r"поищи|найди в интернете|проверь в интернете|актуальн)"
+    r"поищи|найди в интернете|проверь в интернете|актуальн|что нового|что произошло сегодня)"
 )
 WEATHER = re.compile(r"(?i)(погод|прогноз погоды|температур|осадк)")
 CITY_IN_QUESTION = re.compile(r"(?i)\b(?:в|во|для)\s+(?!ближайш|следующ|каком|мо[её]м|городе|мир[еа])([а-яёa-z][а-яёa-z-]{1,})")
@@ -20,6 +20,19 @@ def needs_web_search(text):
 
 def is_weather_question(text):
     return bool(WEATHER.search(text))
+
+
+def is_general_news_question(text):
+    return bool(re.fullmatch(r"(?i)\s*(?:(?:расскажи(?: мне)?|какие|что там с|дай|последние|свежие)?\s*(?:главные\s+)?новости(?:\s+(?:сегодня|за сегодня|мира|в мире))?|что нового(?:\s+в мире)?|что произошло сегодня)\s*[?.!]*\s*", text))
+
+
+def clean_voice_answer(text):
+    text = re.split(r"(?i)\b(?:источники|ссылки|sources)\s*[:—-]", text, maxsplit=1)[0]
+    text = re.sub(r"(?i)https?://\S+|www\.\S+", "", text)
+    text = re.sub(r"(?i)\b(?:[a-z0-9-]+\.)+(?:com|ru|org|net|co\.uk)(?:/\S*)?", "", text)
+    text = re.sub(r"(?i)\b(?:источник|подробнее)\s*[:—-]\s*[^.!?]+[.!?]?", "", text)
+    text = re.sub(r"(?i)\b(?:по данным|согласно)\s+[^,.!?]{3,90},\s*", "", text)
+    return " ".join(text.split()).strip()
 
 
 def has_explicit_city(text):
@@ -40,6 +53,11 @@ def parse_web_answer(data):
         raise ValueError("Web search was not completed")
     parts, sources = [], []
     for item in data["output"]:
+        if item.get("type") == "web_search_call":
+            for source in item.get("action", {}).get("sources", []):
+                url = source.get("url", "") if isinstance(source, dict) else ""
+                if urlparse(url).scheme in {"http", "https"} and url not in sources:
+                    sources.append(url)
         if item.get("type") != "message":
             continue
         for content in item.get("content", []):
@@ -55,4 +73,12 @@ def parse_web_answer(data):
     answer = re.sub(r"cite[^]+|【[^】]+】", "", " ".join(parts)).strip()
     if not answer:
         raise ValueError("Empty web answer")
-    return answer, sources[:3]
+    varied, domains = [], set()
+    for url in sources:
+        domain = urlparse(url).netloc.removeprefix("www.")
+        if domain not in domains:
+            varied.append(url)
+            domains.add(domain)
+        if len(varied) == 5:
+            break
+    return answer, varied

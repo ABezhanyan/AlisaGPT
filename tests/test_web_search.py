@@ -1,4 +1,5 @@
 import json
+import asyncio
 
 import httpx
 import pytest
@@ -6,6 +7,7 @@ import pytest
 from app.assistant import Assistant, UserError
 from app.config import Settings
 from app.store import Store
+from app.web_search import clean_voice_answer
 
 
 def settings(**kwargs):
@@ -22,6 +24,32 @@ def provider(request):
             ],
         })
     return httpx.Response(200, json={"choices": [{"message": {"content": "Обычный ответ"}}]})
+
+
+def test_voice_answer_does_not_read_source_names_or_links():
+    text = "По данным BBC, сегодня тепло. Источники: https://bbc.com/news и www.example.org"
+    assert clean_voice_answer(text) == "сегодня тепло."
+
+
+@pytest.mark.asyncio
+async def test_news_is_prepared_in_background_and_reused_on_station(tmp_path):
+    store = Store(tmp_path / "cached-news.sqlite3")
+    requests = []
+
+    def record(request):
+        requests.append(request)
+        return provider(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(record)) as upstream:
+        assistant = Assistant(settings(telegram_owner_id=42), store, upstream)
+        await assistant.start()
+        await asyncio.gather(*assistant.refresh_tasks)
+        assert len(requests) == 1
+        assert json.loads(requests[0].content)["max_tool_calls"] == 1
+        assert await assistant.reply("42", "Какие новости сегодня?") == "В городе солнечно."
+        assert len(requests) == 1
+        assert store.web_usage("42") == 1
+    store.db.close()
 
 
 @pytest.mark.asyncio

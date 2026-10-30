@@ -20,6 +20,7 @@ def create_app(settings=None, store=None, assistant=None):
 
     @asynccontextmanager
     async def lifespan(app):
+        await assistant.start()
         yield
         tasks = list(pending.values())
         for task in tasks: task.cancel()
