@@ -46,10 +46,12 @@ async def bot_handlers(monkeypatch):
     settings = SimpleNamespace(
         telegram_bot_token="unused", telegram_owner_id=42,
         allowed_models=("gpt-4.1-mini", "gpt-4.1"),
+        voice_daily_limit=10,
     )
     store = Mock()
     store.has_telegram_access.return_value = False
-    assistant = SimpleNamespace(reply=AsyncMock(return_value="Ответ"))
+    store.answer_id.return_value = None
+    assistant = SimpleNamespace(reply=AsyncMock(return_value="Ответ"), synthesize_voice=AsyncMock(return_value=b"OggS"))
     await telegram.run_bot(settings, store, assistant)
     return handlers, settings, store, assistant
 
@@ -59,6 +61,7 @@ def message(user=42, chat_type="private", text="Привет"):
         from_user=SimpleNamespace(id=user),
         chat=SimpleNamespace(type=chat_type),
         text=text, answer=AsyncMock(),
+        answer_voice=AsyncMock(),
     )
 
 
@@ -136,6 +139,21 @@ async def test_guest_can_join_from_one_time_start_link(bot_handlers):
     await handlers["help_command"](guest, SimpleNamespace(args="one-time-code"))
     store.redeem_telegram_invite.assert_called_once_with("99", "one-time-code", "42")
     assert "Доступ открыт" in guest.answer.await_args.args[0]
+
+
+async def test_voice_button_speaks_only_selected_saved_answer(bot_handlers):
+    handlers, _, store, assistant = bot_handlers
+    store.answer_id.return_value = 7
+    store.answer_for_voice.return_value = "Hello, friend."
+    incoming = message()
+    await handlers["chat"](incoming)
+    markup = incoming.answer.await_args.kwargs["reply_markup"]
+    assert markup.inline_keyboard[0][0].callback_data == "voice:7"
+    callback = SimpleNamespace(message=incoming, from_user=SimpleNamespace(id=42), data="voice:7", answer=AsyncMock())
+    await handlers["menu_callback"](callback)
+    store.answer_for_voice.assert_called_once_with("42", 7)
+    assistant.synthesize_voice.assert_awaited_once_with("42", "Hello, friend.")
+    assert incoming.answer_voice.await_args.kwargs["caption"] == "Голос сгенерирован ИИ."
 
 
 @pytest.mark.parametrize("owner,token", [(0, "unused"), (42, "")])

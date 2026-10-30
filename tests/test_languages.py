@@ -4,7 +4,7 @@ import sqlite3
 import httpx
 import pytest
 
-from app.assistant import Assistant
+from app.assistant import Assistant, UserError
 from app.config import Settings
 from app.languages import requested_language
 from app.store import Store
@@ -59,5 +59,28 @@ async def test_language_persists_and_guides_model_after_restart(tmp_path):
         assistant = Assistant(settings, store, upstream)
         assert await assistant.reply("42", "Привет") == "Բարև։"
     assert "արևելահայերենով" in requests[-1]["messages"][1]["content"]
+    store.db.close()
+
+
+@pytest.mark.asyncio
+async def test_voice_audio_is_on_demand_and_limited(tmp_path):
+    store = Store(tmp_path / "voice.sqlite3")
+    store.update_settings("42", language="hy")
+    requests = []
+
+    def provider(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, content=b"OggS-audio")
+
+    settings = Settings(_env_file=None, alisagpt_api_key="key", voice_daily_limit=1)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as upstream:
+        assistant = Assistant(settings, store, upstream)
+        assert await assistant.synthesize_voice("42", "Բարև։") == b"OggS-audio"
+        with pytest.raises(UserError, match="лимит"):
+            await assistant.synthesize_voice("42", "Կրկին։")
+    assert len(requests) == 1
+    assert requests[0]["response_format"] == "opus"
+    assert "Armenian" in requests[0]["instructions"]
+    assert store.voice_usage("42") == 1
     store.db.close()
 

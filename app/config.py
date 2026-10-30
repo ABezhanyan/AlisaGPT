@@ -12,3 +12,5 @@ class Settings(BaseSettings):
     allowed_models: tuple[str, ...] = ("gpt-6-luna", "gpt-4.1-mini", "gpt-4.1", "gpt-4.1-nano")
     daily_limit: int = 100
     web_search_daily_limit: int = 20
+    voice_daily_limit: int = 10
+

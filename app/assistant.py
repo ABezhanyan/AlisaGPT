@@ -108,6 +108,31 @@ class Assistant:
             raise ValueError("Empty spoken web answer")
         return answer, sources
 
+    async def synthesize_voice(self, user_id, answer):
+        if not answer or len(answer) > 1600:
+            raise UserError("Этот ответ слишком длинный для голосового сообщения.")
+        if not self.store.reserve_voice(user_id, self.settings.voice_daily_limit):
+            raise UserError("Дневной лимит голосовых сообщений исчерпан.")
+        language = self.store.settings(user_id).get("language", "ru")
+        style = {
+            "ru": "Speak clearly and naturally in Russian.",
+            "en": "Speak fluent English with natural pronunciation and pacing.",
+            "hy": "Speak Eastern Armenian naturally with clear Armenian pronunciation.",
+        }[language]
+        try:
+            response = await self.client.post(
+                "https://api.openai.com/v1/audio/speech",
+                headers={"Authorization": f"Bearer {self.settings.alisagpt_api_key}"},
+                json={"model": "gpt-4o-mini-tts", "voice": "marin", "input": answer, "instructions": style, "response_format": "opus"},
+                timeout=25,
+            )
+            response.raise_for_status()
+            if not response.content or len(response.content) > 10_000_000:
+                raise ValueError("Unexpected audio response")
+            return response.content
+        except (httpx.HTTPError, ValueError) as exc:
+            raise UserError("Не удалось озвучить ответ. Попробуйте позже.") from exc
+
     async def reply(self, user_id, text, channel="voice"):
         if not self.settings.alisagpt_api_key:
             raise UserError("Администратор ещё не подключил OpenAI API.")

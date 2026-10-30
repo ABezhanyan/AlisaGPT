@@ -8,7 +8,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import Command
 from aiogram.filters.command import CommandObject
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BufferedInputFile
 
 from app.assistant import UserError
 from app.memory_commands import handle_memory_command
@@ -58,7 +58,7 @@ HELP = """Я — ваш помощник и панель управления н
 /language <ru|en|hy> — переключить язык ответов (общий для Станции и Telegram)
 /prompt <инструкция> — задать стиль ответов
 /limit <число> — установить дневной лимит запросов
-/usage — настройки и расход запросов за сегодня
+/usage — настройки и расход запросов, поиска и озвучивания за сегодня
 /reset — очистить общую историю диалога
 /remember <факт> — сохранить факт надолго
 /memories — показать постоянную память
@@ -100,10 +100,10 @@ async def run_bot(settings, store, assistant):
     def menu_for(message):
         return OWNER_MENU if owner(message) else MENU
 
-    async def send(message: Message, text: str):
+    async def send(message: Message, text: str, reply_markup=None):
         # Telegram allows 4096 characters per plain-text message.
         for offset in range(0, len(text), 4000):
-            await message.answer(text[offset : offset + 4000], parse_mode=None)
+            await message.answer(text[offset : offset + 4000], parse_mode=None, reply_markup=reply_markup if offset == 0 else None)
 
     async def show_recipes(target, user_id):
         items = store.recipes(user_id)
@@ -223,6 +223,7 @@ async def run_bot(settings, store, assistant):
                 f"Язык ответов: {LANGUAGE_NAMES[current.get('language', 'ru')]}\n"
                 f"Запросов сегодня (UTC): {store.usage(user_id)}\n"
                 f"Поисков в интернете сегодня (UTC): {store.web_usage(user_id)}/{settings.web_search_daily_limit}\n"
+                f"Озвучиваний сегодня (UTC): {store.voice_usage(user_id)}/{settings.voice_daily_limit}\n"
                 f"Дневной лимит: {current['daily_limit']}\n"
                 "Это счётчик запросов, не сумма списаний OpenAI."
             )
@@ -295,7 +296,20 @@ async def run_bot(settings, store, assistant):
             await send(message, handle_memory_command(store, user_id, "что ты помнишь", max_items=1000))
         elif action == "usage":
             current = store.settings(user_id)
-            await message.answer(f"Модель: {current['model']}\nЯзык ответов: {LANGUAGE_NAMES[current.get('language', 'ru')]}\nЗапросов сегодня (UTC): {store.usage(user_id)}\nПоисков сегодня (UTC): {store.web_usage(user_id)}/{settings.web_search_daily_limit}\nДневной лимит: {current['daily_limit']}", reply_markup=MENU)
+            await message.answer(f"Модель: {current['model']}\nЯзык ответов: {LANGUAGE_NAMES[current.get('language', 'ru')]}\nЗапросов сегодня (UTC): {store.usage(user_id)}\nПоисков сегодня (UTC): {store.web_usage(user_id)}/{settings.web_search_daily_limit}\nОзвучиваний сегодня (UTC): {store.voice_usage(user_id)}/{settings.voice_daily_limit}\nДневной лимит: {current['daily_limit']}", reply_markup=MENU)
+        elif action.startswith("voice:") and action[6:].isdigit():
+            answer = store.answer_for_voice(user_id, int(action[6:]))
+            if not answer:
+                await message.answer("Этот ответ уже удалён из недавней истории.")
+                return
+            try:
+                audio = await assistant.synthesize_voice(user_id, answer)
+                await message.answer_voice(BufferedInputFile(audio, filename="alisagpt.ogg"), caption="Голос сгенерирован ИИ.")
+            except UserError as exc:
+                await message.answer(str(exc))
+            except Exception:
+                logger.error("Voice delivery failed")
+                await message.answer("Не удалось отправить голосовое сообщение. Попробуйте позже.")
         elif action == "language":
             await message.answer("Выберите язык ответов. Выбор общий для Станции и Telegram:", reply_markup=LANGUAGE_MENU)
         elif action.startswith("lang:") and action[5:] in LANGUAGE_NAMES:
@@ -340,7 +354,10 @@ async def run_bot(settings, store, assistant):
             logger.error("Assistant request failed")
             await message.answer("Не удалось получить ответ. Попробуйте чуть позже.")
             return
-        await send(message, response or "Помощник вернул пустой ответ.")
+        spoken_answer = response.split("\nИсточники: ", 1)[0]
+        answer_id = store.answer_id(user_id, spoken_answer)
+        markup = buttons([("🔊 Озвучить", f"voice:{answer_id}")]) if answer_id else None
+        await send(message, response or "Помощник вернул пустой ответ.", reply_markup=markup)
 
     async with Bot(settings.telegram_bot_token, session=bot_session()) as bot:
         await bot.set_my_commands([BotCommand(command=name, description=label) for name, label in [

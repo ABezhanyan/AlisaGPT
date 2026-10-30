@@ -23,6 +23,7 @@ class Store:
         CREATE TABLE IF NOT EXISTS codes(hash TEXT PRIMARY KEY, user_id TEXT, expires REAL);
         CREATE TABLE IF NOT EXISTS usage(user_id TEXT, day TEXT, count INTEGER, PRIMARY KEY(user_id, day));
         CREATE TABLE IF NOT EXISTS web_usage(user_id TEXT, day TEXT, count INTEGER, PRIMARY KEY(user_id, day));
+        CREATE TABLE IF NOT EXISTS voice_usage(user_id TEXT, day TEXT, count INTEGER, PRIMARY KEY(user_id, day));
         CREATE TABLE IF NOT EXISTS pending_weather(user_id TEXT PRIMARY KEY, question TEXT NOT NULL, created REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS web_cache(cache_key TEXT PRIMARY KEY, answer TEXT NOT NULL, sources TEXT NOT NULL, fetched REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS recipes(id INTEGER PRIMARY KEY, user_id TEXT NOT NULL, request TEXT NOT NULL, answer TEXT NOT NULL, created REAL NOT NULL);
@@ -59,6 +60,14 @@ class Store:
         self.db.executemany("INSERT INTO history(user_id,role,content) VALUES(?,?,?)", [(user_id,"user",text),(user_id,"assistant",answer)])
         self.db.execute("DELETE FROM history WHERE user_id=? AND id NOT IN (SELECT id FROM history WHERE user_id=? ORDER BY id DESC LIMIT 12)", (user_id,user_id))
         self.db.commit()
+
+    def answer_id(self, user_id, answer):
+        row = self.db.execute("SELECT id FROM history WHERE user_id=? AND role='assistant' AND content=? ORDER BY id DESC LIMIT 1", (user_id, answer)).fetchone()
+        return row[0] if row else None
+
+    def answer_for_voice(self, user_id, answer_id):
+        row = self.db.execute("SELECT content FROM history WHERE user_id=? AND role='assistant' AND id=?", (user_id, answer_id)).fetchone()
+        return row[0] if row else None
 
     def clear_history(self, user_id):
         self.db.execute("DELETE FROM history WHERE user_id=?", (user_id,)); self.db.commit()
@@ -115,6 +124,16 @@ class Store:
     def web_usage(self, user_id):
         row = self.db.execute("SELECT count FROM web_usage WHERE user_id=? AND day=?", (user_id, datetime.now(timezone.utc).date().isoformat())).fetchone()
         return row[0] if row else 0
+
+    def voice_usage(self, user_id):
+        row = self.db.execute("SELECT count FROM voice_usage WHERE user_id=? AND day=?", (user_id, datetime.now(timezone.utc).date().isoformat())).fetchone()
+        return row[0] if row else 0
+
+    def reserve_voice(self, user_id, limit):
+        day = datetime.now(timezone.utc).date().isoformat()
+        with self.db:
+            self.db.execute("INSERT OR IGNORE INTO voice_usage VALUES(?,?,0)", (user_id, day))
+            return self.db.execute("UPDATE voice_usage SET count=count+1 WHERE user_id=? AND day=? AND count<?", (user_id, day, limit)).rowcount == 1
 
     def reserve_web_search(self, user_id, limit):
         day = datetime.now(timezone.utc).date().isoformat()
