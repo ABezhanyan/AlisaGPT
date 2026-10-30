@@ -133,6 +133,7 @@ async def run_bot(settings, store, assistant):
             await message.answer(
                 f"Модель: {current['model']}\n"
                 f"Запросов сегодня (UTC): {store.usage(user_id)}\n"
+                f"Поисков в интернете сегодня (UTC): {store.web_usage(user_id)}/{settings.web_search_daily_limit}\n"
                 f"Дневной лимит: {current['daily_limit']}\n"
                 "Это счётчик запросов, не сумма списаний OpenAI."
             )
@@ -176,7 +177,7 @@ async def run_bot(settings, store, assistant):
             await send(message, memory_reply)
             return
         try:
-            response = await assistant.reply(user_id, text)
+            response = await assistant.reply(user_id, text, channel="telegram")
         except UserError as exc:
             await send(message, str(exc))
             return

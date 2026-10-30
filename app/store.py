@@ -21,6 +21,8 @@ class Store:
         CREATE TABLE IF NOT EXISTS links(alice_id TEXT PRIMARY KEY, user_id TEXT);
         CREATE TABLE IF NOT EXISTS codes(hash TEXT PRIMARY KEY, user_id TEXT, expires REAL);
         CREATE TABLE IF NOT EXISTS usage(user_id TEXT, day TEXT, count INTEGER, PRIMARY KEY(user_id, day));
+        CREATE TABLE IF NOT EXISTS web_usage(user_id TEXT, day TEXT, count INTEGER, PRIMARY KEY(user_id, day));
+        CREATE TABLE IF NOT EXISTS pending_weather(user_id TEXT PRIMARY KEY, question TEXT NOT NULL, created REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS memories(id INTEGER PRIMARY KEY, user_id TEXT NOT NULL, fact TEXT NOT NULL, source TEXT NOT NULL, created REAL NOT NULL, UNIQUE(user_id, fact));
         CREATE INDEX IF NOT EXISTS memories_user ON memories(user_id, created DESC);
         ''')
@@ -77,6 +79,38 @@ class Store:
             row["source"] == "manual",
             row["id"]), reverse=True)
         return ranked[:limit]
+
+    def weather_city(self, user_id):
+        row = self.db.execute("SELECT fact FROM memories WHERE user_id=? AND fact LIKE 'Город для прогноза погоды: %' ORDER BY id DESC LIMIT 1", (user_id,)).fetchone()
+        return row[0].split(": ", 1)[1] if row else None
+
+    def set_weather_city(self, user_id, city):
+        city = " ".join(city.strip().split())
+        if not re.fullmatch(r"[А-Яа-яЁёA-Za-z\s-]{2,60}", city):
+            raise ValueError("Invalid city")
+        with self.db:
+            self.db.execute("DELETE FROM memories WHERE user_id=? AND fact LIKE 'Город для прогноза погоды: %'", (user_id,))
+            self.db.execute("INSERT INTO memories(user_id, fact, source, created) VALUES(?,?,?,?)", (user_id, f"Город для прогноза погоды: {city}", "manual", time.time()))
+
+    def ask_weather_city(self, user_id, question):
+        with self.db:
+            self.db.execute("INSERT OR REPLACE INTO pending_weather VALUES(?,?,?)", (user_id, question, time.time()))
+
+    def take_pending_weather(self, user_id):
+        with self.db:
+            row = self.db.execute("SELECT question, created FROM pending_weather WHERE user_id=?", (user_id,)).fetchone()
+            self.db.execute("DELETE FROM pending_weather WHERE user_id=?", (user_id,))
+        return row[0] if row and time.time() - row[1] < 300 else None
+
+    def web_usage(self, user_id):
+        row = self.db.execute("SELECT count FROM web_usage WHERE user_id=? AND day=?", (user_id, datetime.now(timezone.utc).date().isoformat())).fetchone()
+        return row[0] if row else 0
+
+    def reserve_web_search(self, user_id, limit):
+        day = datetime.now(timezone.utc).date().isoformat()
+        with self.db:
+            self.db.execute("INSERT OR IGNORE INTO web_usage VALUES(?,?,0)", (user_id, day))
+            return self.db.execute("UPDATE web_usage SET count=count+1 WHERE user_id=? AND day=? AND count<?", (user_id, day, limit)).rowcount == 1
 
     def usage(self, user_id):
         row = self.db.execute("SELECT count FROM usage WHERE user_id=? AND day=?", (user_id,datetime.now(timezone.utc).date().isoformat())).fetchone()
