@@ -7,6 +7,12 @@ import pytest
 from app.assistant import Assistant
 from app.config import Settings
 from app.store import Store
+from app.recipes import recipe_title
+
+
+def test_recipe_title_removes_full_spoken_prompt():
+    assert recipe_title("Дай рецепт овсяной каши") == "Овсяной каши"
+    assert recipe_title("Как приготовить борщ?") == "Борщ"
 
 
 @pytest.mark.asyncio
@@ -50,3 +56,4 @@ async def test_telegram_recipe_answer_is_not_duplicated(tmp_path):
     assert len(requests) == 1
     assert store.recipes("42") == []
     store.db.close()
+

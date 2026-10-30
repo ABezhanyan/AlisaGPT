@@ -5,7 +5,7 @@ import sqlite3
 import time
 from datetime import datetime, timezone
 import httpx
-from .recipes import is_recipe_request
+from .recipes import is_recipe_request, recipe_title
 from .web_search import city_reply, clean_voice_answer, has_explicit_city, is_general_news_question, is_weather_question, needs_web_search, parse_web_answer
 
 class UserError(Exception):
@@ -19,6 +19,7 @@ class Assistant:
         self.learning_tasks = set()
         self.refresh_tasks = set()
         self.delivery_tasks = set()
+        self.news_preparation_task = None
 
     async def start(self):
         if not self.settings.alisagpt_api_key or self.settings.telegram_owner_id <= 0:
@@ -27,11 +28,21 @@ class Assistant:
         news_key = f"news:{today}"
         if not self.store.web_cache(news_key):
             self._schedule_refresh(str(self.settings.telegram_owner_id), news_key, "Главные новости сегодня", news=True)
+        self.news_preparation_task = asyncio.create_task(self._prepare_news_loop())
         for city in self.store.known_weather_cities():
             query = f"Какая погода? для города {city}"
             key = f"query:{today}:{query.lower()}"
             if not self.store.web_cache(key):
                 self._schedule_refresh(str(self.settings.telegram_owner_id), key, query)
+
+    async def _prepare_news_loop(self):
+        user_id = str(self.settings.telegram_owner_id)
+        while True:
+            await asyncio.sleep(900)
+            key = f"news:{datetime.now(timezone.utc).date().isoformat()}"
+            cache = self.store.web_cache(key)
+            if not cache or time.time() - cache["fetched"] > 3600:
+                await self._refresh_cache(user_id, key, "Главные новости сегодня", True)
 
     def _schedule_refresh(self, user_id, key, query, news=False):
         task = asyncio.create_task(self._refresh_cache(user_id, key, query, news))
@@ -46,9 +57,11 @@ class Assistant:
             pass
 
     async def close(self):
+        if self.news_preparation_task:
+            self.news_preparation_task.cancel()
         for task in self.learning_tasks | self.refresh_tasks | self.delivery_tasks:
             task.cancel()
-        await asyncio.gather(*(self.learning_tasks | self.refresh_tasks | self.delivery_tasks), return_exceptions=True)
+        await asyncio.gather(*(self.learning_tasks | self.refresh_tasks | self.delivery_tasks | ({self.news_preparation_task} if self.news_preparation_task else set())), return_exceptions=True)
         await self.client.aclose()
 
     async def _send_recipe(self, recipe_id, request, answer):
@@ -128,7 +141,7 @@ class Assistant:
                     cache = self.store.web_cache(cache_key)
                     age = time.time() - cache["fetched"] if cache else float("inf")
                     fresh_for = 3600 if news else 600
-                    if cache and age < fresh_for:
+                    if cache and (news or age < fresh_for):
                         answer, sources = cache["answer"], cache["sources"]
                     elif cache and age < (7200 if news else 1200):
                         answer, sources = cache["answer"], cache["sources"]
@@ -154,8 +167,9 @@ class Assistant:
                 raise UserError("Сервис ответа временно недоступен. Попробуйте позже.") from exc
             self.store.add_exchange(user_id, original_text, answer)
             if channel == "voice" and is_recipe_request(original_text):
-                recipe_id = self.store.save_recipe(user_id, original_text, answer)
-                task = asyncio.create_task(self._send_recipe(recipe_id, original_text, answer))
+                title = recipe_title(original_text)
+                recipe_id = self.store.save_recipe(user_id, title, answer)
+                task = asyncio.create_task(self._send_recipe(recipe_id, title, answer))
                 self.delivery_tasks.add(task)
                 task.add_done_callback(self.delivery_tasks.discard)
             task = asyncio.create_task(self._learn_facts(user_id, original_text))
@@ -189,3 +203,4 @@ class Assistant:
                     self.store.remember(user_id, fact, source="auto")
         except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError, sqlite3.Error):
             pass
+

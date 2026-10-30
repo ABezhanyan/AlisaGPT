@@ -130,11 +130,15 @@ class Store:
             return cursor.lastrowid
 
     def recipes(self, user_id, limit=20):
-        return [dict(row) for row in self.db.execute("SELECT id, request FROM recipes WHERE user_id=? ORDER BY id DESC LIMIT ?", (user_id, limit))]
+        from .recipes import recipe_title
+        return [{**dict(row), "request": recipe_title(row["request"])} for row in self.db.execute("SELECT id, request FROM recipes WHERE user_id=? ORDER BY id DESC LIMIT ?", (user_id, limit))]
 
     def recipe(self, user_id, recipe_id):
         row = self.db.execute("SELECT id, request, answer FROM recipes WHERE user_id=? AND id=?", (user_id, recipe_id)).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        from .recipes import recipe_title
+        return {**dict(row), "request": recipe_title(row["request"])}
 
     def known_weather_cities(self):
         rows = self.db.execute("SELECT DISTINCT substr(fact, length('Город для прогноза погоды: ') + 1) FROM memories WHERE fact LIKE 'Город для прогноза погоды: %'").fetchall()
@@ -173,3 +177,4 @@ class Store:
         with self.db:
             self.db.execute("DELETE FROM links WHERE user_id=?", (user_id,))
             self.db.execute("DELETE FROM codes WHERE user_id=?", (user_id,))
+

@@ -8,13 +8,27 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import Command
 from aiogram.filters.command import CommandObject
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 
 from app.assistant import UserError
 from app.memory_commands import handle_memory_command
 
 
 logger = logging.getLogger(__name__)
+
+
+def buttons(*rows):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=label, callback_data=action) for label, action in row]
+        for row in rows
+    ])
+
+
+MENU = buttons(
+    [("📖 Рецепты", "recipes"), ("🧠 Память", "memories")],
+    [("📊 Расход", "usage"), ("🔗 Привязка", "link")],
+    [("⚙️ Команды", "help")],
+)
 
 
 def bot_session():
@@ -68,10 +82,25 @@ async def run_bot(settings, store, assistant):
         for offset in range(0, len(text), 4000):
             await message.answer(text[offset : offset + 4000], parse_mode=None)
 
+    async def show_recipes(target, user_id):
+        items = store.recipes(user_id)
+        if not items:
+            await target.answer("Сохранённых рецептов пока нет.", reply_markup=MENU)
+            return
+        markup = buttons(*[[(item["request"][:45], f'recipe:{item["id"]}')] for item in items], [("◀️ Меню", "menu")])
+        await target.answer("Выберите рецепт:", reply_markup=markup)
+
+    async def show_recipe(target, user_id, recipe_id):
+        item = store.recipe(user_id, recipe_id)
+        if not item:
+            await target.answer("Рецепт не найден.", reply_markup=MENU)
+            return
+        await send(target, f'{item["request"]}\n\n{item["answer"]}')
+
     @dispatcher.message(Command("start", "help"))
     async def help_command(message: Message):
         if owner(message):
-            await message.answer(HELP)
+            await message.answer(HELP, reply_markup=MENU)
 
     @dispatcher.message(Command("link"))
     async def link_command(message: Message):
@@ -167,11 +196,7 @@ async def run_bot(settings, store, assistant):
     @dispatcher.message(Command("recipes"))
     async def recipes_command(message: Message):
         if user_id := owner(message):
-            items = store.recipes(user_id)
-            if not items:
-                await message.answer("Сохранённых рецептов пока нет.")
-            else:
-                await send(message, "Сохранённые рецепты:\n" + "\n".join(f'{item["id"]}. {item["request"]}' for item in items) + "\nОткрыть: /recipe <номер>")
+            await show_recipes(message, user_id)
 
     @dispatcher.message(Command("recipe"))
     async def recipe_command(message: Message, command: CommandObject):
@@ -182,11 +207,33 @@ async def run_bot(settings, store, assistant):
         except ValueError:
             await message.answer("Используйте /recipe <номер>.")
             return
-        item = store.recipe(user_id, recipe_id)
-        if not item:
-            await message.answer("Рецепт не найден.")
+        await show_recipe(message, user_id, recipe_id)
+
+    @dispatcher.callback_query(F.data)
+    async def menu_callback(callback: CallbackQuery):
+        message = callback.message
+        if not message or message.chat.type != "private" or not callback.from_user or callback.from_user.id != settings.telegram_owner_id:
+            await callback.answer("Недоступно")
             return
-        await send(message, f'{item["request"]}\n\n{item["answer"]}')
+        user_id = str(callback.from_user.id)
+        await callback.answer()
+        action = callback.data or ""
+        if action == "recipes":
+            await show_recipes(message, user_id)
+        elif action.startswith("recipe:") and action[7:].isdigit():
+            await show_recipe(message, user_id, int(action[7:]))
+        elif action == "memories":
+            await send(message, handle_memory_command(store, user_id, "что ты помнишь", max_items=1000))
+        elif action == "usage":
+            current = store.settings(user_id)
+            await message.answer(f"Модель: {current['model']}\nЗапросов сегодня (UTC): {store.usage(user_id)}\nПоисков сегодня (UTC): {store.web_usage(user_id)}/{settings.web_search_daily_limit}\nДневной лимит: {current['daily_limit']}", reply_markup=MENU)
+        elif action == "link":
+            code = store.create_link_code(user_id)
+            await message.answer(f"Скажите Алисе в навыке: «Привязать {code}». Код одноразовый и действует 5 минут.")
+        elif action == "help":
+            await message.answer(HELP, reply_markup=MENU)
+        elif action == "menu":
+            await message.answer("Главное меню:", reply_markup=MENU)
 
     @dispatcher.message(F.text)
     async def chat(message: Message):
@@ -215,4 +262,10 @@ async def run_bot(settings, store, assistant):
         await send(message, response or "Помощник вернул пустой ответ.")
 
     async with Bot(settings.telegram_bot_token, session=bot_session()) as bot:
-        await dispatcher.start_polling(bot, allowed_updates=["message"])
+        await bot.set_my_commands([BotCommand(command=name, description=label) for name, label in [
+            ("start", "Открыть меню"), ("recipes", "Сохранённые рецепты"),
+            ("memories", "Постоянная память"), ("usage", "Расход и модель"),
+            ("link", "Привязать Станцию"), ("help", "Все команды"),
+        ]])
+        await dispatcher.start_polling(bot, allowed_updates=["message", "callback_query"])
+

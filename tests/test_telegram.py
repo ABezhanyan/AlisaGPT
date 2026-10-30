@@ -18,6 +18,12 @@ async def bot_handlers(monkeypatch):
                 return callback
             return register
 
+        def callback_query(self, *filters):
+            def register(callback):
+                handlers[callback.__name__] = callback
+                return callback
+            return register
+
         async def start_polling(self, *args, **kwargs):
             pass
 
@@ -29,6 +35,9 @@ async def bot_handlers(monkeypatch):
             return self
 
         async def __aexit__(self, *args):
+            pass
+
+        async def set_my_commands(self, *args):
             pass
 
     monkeypatch.setattr(telegram, "Dispatcher", Dispatcher)
@@ -57,6 +66,8 @@ async def test_unauthorized_messages_cannot_read_or_change_anything(bot_handlers
     handlers, _, store, assistant = bot_handlers
     incoming = message(user, chat_type)
     for name, callback in handlers.items():
+        if name == "menu_callback":
+            continue
         if name in {"model_command", "prompt_command", "limit_command", "remember_command", "forget_command", "recipe_command"}:
             await callback(incoming, SimpleNamespace(args="gpt-4.1-mini"))
         else:
@@ -91,6 +102,19 @@ async def test_unlink_revokes_owner_links(bot_handlers):
     incoming.answer.assert_awaited_once()
 
 
+async def test_recipe_buttons_open_saved_recipe_for_owner(bot_handlers):
+    handlers, _, store, _ = bot_handlers
+    store.recipes.return_value = [{"id": 7, "request": "Овсяной каши"}]
+    store.recipe.return_value = {"request": "Овсяной каши", "answer": "Ингредиенты и шаги"}
+    incoming = message()
+    await handlers["recipes_command"](incoming)
+    assert incoming.answer.await_args.kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "recipe:7"
+    callback = SimpleNamespace(message=incoming, from_user=SimpleNamespace(id=42), data="recipe:7", answer=AsyncMock())
+    await handlers["menu_callback"](callback)
+    store.recipe.assert_called_once_with("42", 7)
+    assert "Ингредиенты" in incoming.answer.await_args.args[0]
+
+
 @pytest.mark.parametrize("owner,token", [(0, "unused"), (42, "")])
 async def test_missing_configuration_never_starts_polling(owner, token):
     settings = SimpleNamespace(telegram_owner_id=owner, telegram_bot_token=token)
@@ -111,3 +135,4 @@ def test_bot_session_preserves_proxy_and_platform_ca(monkeypatch):
     factory.assert_called_once_with(proxy="http://proxy:8080")
     tls_factory.assert_called_once_with(cafile="/platform/ca.pem")
     assert connector._connector_init["ssl"] is tls_context
+
