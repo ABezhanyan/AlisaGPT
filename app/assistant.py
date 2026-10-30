@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+import sqlite3
 import httpx
 
 class UserError(Exception):
@@ -11,6 +12,13 @@ class Assistant:
         self.settings, self.store = settings, store
         self.client = client or httpx.AsyncClient(timeout=25, trust_env=True)
         self.locks = {}
+        self.learning_tasks = set()
+
+    async def close(self):
+        for task in self.learning_tasks:
+            task.cancel()
+        await asyncio.gather(*self.learning_tasks, return_exceptions=True)
+        await self.client.aclose()
 
     async def reply(self, user_id, text):
         if not self.settings.alisagpt_api_key:
@@ -37,7 +45,9 @@ class Assistant:
             except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
                 raise UserError("Сервис ответа временно недоступен. Попробуйте позже.") from exc
             self.store.add_exchange(user_id, text, answer)
-            await self._learn_facts(user_id, text)
+            task = asyncio.create_task(self._learn_facts(user_id, text))
+            self.learning_tasks.add(task)
+            task.add_done_callback(self.learning_tasks.discard)
             return answer
 
     async def _learn_facts(self, user_id, text):
@@ -54,7 +64,7 @@ class Assistant:
             ],
         }
         try:
-            response = await self.client.post("https://api.openai.com/v1/chat/completions", headers={"Authorization": f"Bearer {self.settings.alisagpt_api_key}"}, json=request)
+            response = await self.client.post("https://api.openai.com/v1/chat/completions", headers={"Authorization": f"Bearer {self.settings.alisagpt_api_key}"}, json=request, timeout=8)
             response.raise_for_status()
             facts = json.loads(response.json()["choices"][0]["message"]["content"])["facts"]
             if not isinstance(facts, list):
@@ -62,5 +72,5 @@ class Assistant:
             for fact in facts[:2]:
                 if isinstance(fact, str) and len(fact.strip()) <= 200 and not re.search(r"(?i)(sk-[a-z0-9_-]{12,}|парол|токен|api.?key|секрет|\b\d{12,}\b)", fact):
                     self.store.remember(user_id, fact, source="auto")
-        except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError):
+        except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError, sqlite3.Error):
             pass

@@ -12,7 +12,7 @@ async def bot():
     try:
         await run_bot(settings, store, assistant)
     finally:
-        await assistant.client.aclose()
+        await assistant.close()
         store.db.close()
 
 if __name__ == '__main__':

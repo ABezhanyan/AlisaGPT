@@ -24,7 +24,7 @@ def create_app(settings=None, store=None, assistant=None):
         tasks = list(pending.values())
         for task in tasks: task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        await assistant.client.aclose()
+        await assistant.close()
         store.db.close()
 
     app = FastAPI(lifespan=lifespan)
@@ -90,14 +90,14 @@ def create_app(settings=None, store=None, assistant=None):
         elif (memory_reply := handle_memory_command(store, user_id, command, max_items=10)) is not None:
             result = reply(memory_reply)
         elif user_id in pending:
-            result = await take_result(user_id, 0 if command.lower() in {'продолжи','ответ','готово'} else 2.5)
+            result = await take_result(user_id, 0 if command.lower() in {'продолжи','ответ','готово'} else 3.5)
         elif not command or session.get('new') and command.lower() in {'продолжи','ответ'}:
             result = reply('Я слушаю. Задайте вопрос.')
         elif command.lower() in {'продолжи','ответ'}:
             result = reply('Ожидающего ответа нет. Задайте новый вопрос.')
         else:
             pending[user_id] = asyncio.create_task(assistant.reply(user_id, command))
-            result = await take_result(user_id, 2.5)
+            result = await take_result(user_id, 3.5)
         cache[key] = result
         if len(cache)>1000: cache.popitem(last=False)
         return result

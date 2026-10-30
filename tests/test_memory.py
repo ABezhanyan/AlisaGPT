@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import httpx
@@ -31,6 +32,7 @@ async def test_auto_memory_survives_restart_and_informs_next_answer(tmp_path):
     async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as upstream:
         assistant = Assistant(settings(), store, upstream)
         assert await assistant.reply("owner", "Меня зовут Ирина") == "Ответ"
+        await asyncio.gather(*assistant.learning_tasks)
         assert len(requests) == 2
     store.db.close()
 
@@ -39,8 +41,30 @@ async def test_auto_memory_survives_restart_and_informs_next_answer(tmp_path):
     async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as upstream:
         assistant = Assistant(settings(), store, upstream)
         await assistant.reply("owner", "Как меня зовут?")
+        await asyncio.gather(*assistant.learning_tasks)
     answer_request = next(request for request in reversed(requests) if "response_format" not in request)
     assert "Пользователя зовут Ирина" in answer_request["messages"][1]["content"]
+    store.db.close()
+
+
+@pytest.mark.asyncio
+async def test_fact_extraction_does_not_delay_spoken_answer(tmp_path):
+    store = Store(tmp_path / "fast.sqlite3")
+    release = asyncio.Event()
+
+    async def provider(request):
+        if json.loads(request.content).get("response_format"):
+            await release.wait()
+            content = '{"facts": []}'
+        else:
+            content = "Готовый ответ"
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as upstream:
+        assistant = Assistant(settings(), store, upstream)
+        assert await asyncio.wait_for(assistant.reply("owner", "Я люблю чай"), 0.5) == "Готовый ответ"
+        release.set()
+        await asyncio.gather(*assistant.learning_tasks)
     store.db.close()
 
 
