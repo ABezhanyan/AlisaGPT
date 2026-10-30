@@ -41,7 +41,7 @@ class Assistant:
             await asyncio.sleep(900)
             key = f"news:{datetime.now(timezone.utc).date().isoformat()}"
             cache = self.store.web_cache(key)
-            if not cache or time.time() - cache["fetched"] > 3600:
+            if not cache or time.time() - cache["fetched"] > 14400:
                 await self._refresh_cache(user_id, key, "Главные новости сегодня", True)
 
     def _schedule_refresh(self, user_id, key, query, news=False):
