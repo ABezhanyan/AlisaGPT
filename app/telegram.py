@@ -12,6 +12,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKe
 
 from app.assistant import UserError
 from app.memory_commands import handle_memory_command
+from app.languages import CONFIRMATIONS, LANGUAGE_NAMES, parse_language
 
 
 logger = logging.getLogger(__name__)
@@ -26,14 +27,16 @@ def buttons(*rows):
 
 MENU = buttons(
     [("📖 Рецепты", "recipes"), ("🧠 Память", "memories")],
-    [("📊 Расход", "usage"), ("🔗 Привязка", "link")],
+    [("📊 Расход", "usage"), ("🌐 Язык", "language")],
     [("⚙️ Команды", "help")],
 )
 OWNER_MENU = buttons(
     [("📖 Рецепты", "recipes"), ("🧠 Память", "memories")],
-    [("📊 Расход", "usage"), ("🔗 Привязка", "link")],
+    [("📊 Расход", "usage"), ("🌐 Язык", "language")],
+    [("🔗 Привязка", "link")],
     [("👥 Доступ", "access"), ("⚙️ Команды", "help")],
 )
+LANGUAGE_MENU = buttons([("🇷🇺 Русский", "lang:ru"), ("🇬🇧 English", "lang:en"), ("🇦🇲 Հայերեն", "lang:hy")])
 
 
 def bot_session():
@@ -52,6 +55,7 @@ HELP = """Я — ваш помощник и панель управления н
 /link — получить одноразовый код привязки Станции
 /unlink — отвязать Алису и аннулировать коды привязки
 /model <модель> — выбрать модель
+/language <ru|en|hy> — переключить язык ответов (общий для Станции и Telegram)
 /prompt <инструкция> — задать стиль ответов
 /limit <число> — установить дневной лимит запросов
 /usage — настройки и расход запросов за сегодня
@@ -216,11 +220,23 @@ async def run_bot(settings, store, assistant):
             current = store.settings(user_id)
             await message.answer(
                 f"Модель: {current['model']}\n"
+                f"Язык ответов: {LANGUAGE_NAMES[current.get('language', 'ru')]}\n"
                 f"Запросов сегодня (UTC): {store.usage(user_id)}\n"
                 f"Поисков в интернете сегодня (UTC): {store.web_usage(user_id)}/{settings.web_search_daily_limit}\n"
                 f"Дневной лимит: {current['daily_limit']}\n"
                 "Это счётчик запросов, не сумма списаний OpenAI."
             )
+
+    @dispatcher.message(Command("language"))
+    async def language_command(message: Message, command: CommandObject):
+        if not (user_id := authorized(message)):
+            return
+        choice = parse_language(command.args or "")
+        if not choice:
+            await message.answer("Выберите язык ответов. Выбор общий для Станции и Telegram:", reply_markup=LANGUAGE_MENU)
+            return
+        store.update_settings(user_id, language=choice)
+        await message.answer(CONFIRMATIONS[choice], reply_markup=menu_for(message))
 
     @dispatcher.message(Command("reset"))
     async def reset_command(message: Message):
@@ -279,7 +295,13 @@ async def run_bot(settings, store, assistant):
             await send(message, handle_memory_command(store, user_id, "что ты помнишь", max_items=1000))
         elif action == "usage":
             current = store.settings(user_id)
-            await message.answer(f"Модель: {current['model']}\nЗапросов сегодня (UTC): {store.usage(user_id)}\nПоисков сегодня (UTC): {store.web_usage(user_id)}/{settings.web_search_daily_limit}\nДневной лимит: {current['daily_limit']}", reply_markup=MENU)
+            await message.answer(f"Модель: {current['model']}\nЯзык ответов: {LANGUAGE_NAMES[current.get('language', 'ru')]}\nЗапросов сегодня (UTC): {store.usage(user_id)}\nПоисков сегодня (UTC): {store.web_usage(user_id)}/{settings.web_search_daily_limit}\nДневной лимит: {current['daily_limit']}", reply_markup=MENU)
+        elif action == "language":
+            await message.answer("Выберите язык ответов. Выбор общий для Станции и Telegram:", reply_markup=LANGUAGE_MENU)
+        elif action.startswith("lang:") and action[5:] in LANGUAGE_NAMES:
+            choice = action[5:]
+            store.update_settings(user_id, language=choice)
+            await message.answer(CONFIRMATIONS[choice], reply_markup=OWNER_MENU if callback.from_user.id == settings.telegram_owner_id else MENU)
         elif action == "link":
             if callback.from_user.id != settings.telegram_owner_id:
                 await message.answer("Привязкой Станции управляет владелец.")
@@ -326,6 +348,7 @@ async def run_bot(settings, store, assistant):
             ("memories", "Постоянная память"), ("usage", "Расход и модель"),
             ("link", "Привязать Станцию"), ("help", "Все команды"),
             ("invite", "Пригласить человека"), ("access", "Кому открыт доступ"),
+            ("language", "Язык ответов"),
         ]])
         await dispatcher.start_polling(bot, allowed_updates=["message", "callback_query"])
 

@@ -7,11 +7,12 @@ CURRENT_INFO = re.compile(
     r"расписани|результат(?:ы| матча)|сч[её]т матч|"
     r"\bсегодня\b|\bсейчас\b|\bзавтра\b|"
     r"последн(?:ие|их) событи|свеж(?:ие|их) событи|"
+    r"\b(?:weather|forecast|news|headlines|latest events)\b|եղանակ|նորությ|"
     r"поищи|найди в интернете|проверь в интернете|актуальн|что нового|что произошло сегодня)"
 )
-WEATHER = re.compile(r"(?i)(погод|прогноз погоды|температур|осадк)")
+WEATHER = re.compile(r"(?i)(погод|прогноз погоды|температур|осадк|\bweather\b|\bforecast\b|եղանակ)")
 CITY_IN_QUESTION = re.compile(r"(?i)\b(?:в|во|для)\s+(?!ближайш|следующ|каком|мо[её]м|городе|мир[еа])([а-яёa-z][а-яёa-z-]{1,})")
-CITY_REPLY = re.compile(r"[А-Яа-яЁёA-Za-z\s-]{2,60}")
+CITY_REPLY = re.compile(r"[А-Яа-яЁёA-Za-zԱ-Ֆա-ֆ\s-]{2,60}")
 
 
 def needs_web_search(text):
@@ -23,7 +24,7 @@ def is_weather_question(text):
 
 
 def is_general_news_question(text):
-    return bool(re.fullmatch(r"(?i)\s*(?:(?:расскажи(?: мне)?|какие|что там с|дай|последние|свежие)?\s*(?:главные\s+)?новости(?:\s+(?:сегодня|за сегодня|мира|в мире))?|что нового(?:\s+в мире)?|что произошло сегодня)\s*[?.!]*\s*", text))
+    return bool(re.fullmatch(r"(?i)\s*(?:(?:расскажи(?: мне)?|какие|что там с|дай|последние|свежие)?\s*(?:главные\s+)?новости(?:\s+(?:сегодня|за сегодня|мира|в мире))?|что нового(?:\s+в мире)?|что произошло сегодня|(?:what(?:'s| is) the |tell me the |latest |today(?:'s)? )?(?:news|headlines)(?: today| in the world)?|(?:այսօրվա\s+)?նորությունները)\s*[?.!՞]*\s*", text))
 
 
 def clean_voice_answer(text):
@@ -36,7 +37,7 @@ def clean_voice_answer(text):
 
 
 def has_explicit_city(text):
-    return bool(CITY_IN_QUESTION.search(text))
+    return bool(CITY_IN_QUESTION.search(text) or re.search(r"(?i)\b(?:in|for)\s+(?!my\b|the\b)([a-z][a-z-]{1,})", text))
 
 
 def city_reply(text):
@@ -82,3 +83,4 @@ def parse_web_answer(data):
         if len(varied) == 5:
             break
     return answer, varied
+

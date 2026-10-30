@@ -122,7 +122,7 @@ async def test_shared_history_and_alice_deduplication(store):
         assert len(requests) == 2
         assert requests[0]['model'] == 'gpt-6-luna'
         assert requests[0]['reasoning_effort'] == 'none'
-        assert requests[1]['messages'][1:3] == [
+        assert requests[1]['messages'][2:4] == [
             {'role': 'user', 'content': 'Вопрос из Telegram'},
             {'role': 'assistant', 'content': 'Ответ 1'}]
         assert store.history('telegram-owner')[-1]['content'] == 'Ответ 2'
@@ -190,3 +190,4 @@ async def test_alice_slow_answer_is_retrieved_without_second_generation(store):
             assert result.json()['response']['text'] == 'Готовый ответ'
             assert len(calls) == 1
             assert len(store.history('telegram-owner')) == 2
+

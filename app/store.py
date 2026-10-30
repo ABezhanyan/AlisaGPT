@@ -32,18 +32,22 @@ class Store:
         CREATE TABLE IF NOT EXISTS memories(id INTEGER PRIMARY KEY, user_id TEXT NOT NULL, fact TEXT NOT NULL, source TEXT NOT NULL, created REAL NOT NULL, UNIQUE(user_id, fact));
         CREATE INDEX IF NOT EXISTS memories_user ON memories(user_id, created DESC);
         ''')
+        if not any(row[1] == "language" for row in self.db.execute("PRAGMA table_info(profiles)")):
+            self.db.execute("ALTER TABLE profiles ADD COLUMN language TEXT NOT NULL DEFAULT 'ru'")
         self.db.commit()
 
     def settings(self, user_id):
-        self.db.execute("INSERT OR IGNORE INTO profiles VALUES(?,?,?,?)", (user_id, self.model, DEFAULT_PROMPT, self.daily_limit))
+        self.db.execute("INSERT OR IGNORE INTO profiles(id,model,prompt,daily_limit,language) VALUES(?,?,?,?,?)", (user_id, self.model, DEFAULT_PROMPT, self.daily_limit, "ru"))
         self.db.commit()
         return dict(self.db.execute("SELECT * FROM profiles WHERE id=?", (user_id,)).fetchone())
 
     def update_settings(self, user_id, **kwargs):
         self.settings(user_id)
         for key, value in kwargs.items():
-            if key not in {"model", "prompt", "daily_limit"}:
+            if key not in {"model", "prompt", "daily_limit", "language"}:
                 raise ValueError("Unknown setting")
+            if key == "language" and value not in {"ru", "en", "hy"}:
+                raise ValueError("Unknown language")
             self.db.execute(f"UPDATE profiles SET {key}=? WHERE id=?", (value, user_id))
         self.db.commit()
 
@@ -92,7 +96,7 @@ class Store:
 
     def set_weather_city(self, user_id, city):
         city = " ".join(city.strip().split())
-        if not re.fullmatch(r"[А-Яа-яЁёA-Za-z\s-]{2,60}", city):
+        if not re.fullmatch(r"[А-Яа-яЁёA-Za-zԱ-Ֆա-ֆ\s-]{2,60}", city):
             raise ValueError("Invalid city")
         with self.db:
             self.db.execute("DELETE FROM memories WHERE user_id=? AND fact LIKE 'Город для прогноза погоды: %'", (user_id,))

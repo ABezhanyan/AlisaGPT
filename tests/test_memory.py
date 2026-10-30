@@ -43,7 +43,7 @@ async def test_auto_memory_survives_restart_and_informs_next_answer(tmp_path):
         await assistant.reply("owner", "Как меня зовут?")
         await asyncio.gather(*assistant.learning_tasks)
     answer_request = next(request for request in reversed(requests) if "response_format" not in request)
-    assert "Пользователя зовут Ирина" in answer_request["messages"][1]["content"]
+    assert "Пользователя зовут Ирина" in answer_request["messages"][2]["content"]
     store.db.close()
 
 
@@ -97,3 +97,4 @@ def test_memory_rejects_keys_and_is_isolated_by_user(tmp_path):
     assert store.forget("other") == 0
     assert len(store.memories("owner")) == 1
     store.db.close()
+

@@ -69,7 +69,7 @@ async def test_unauthorized_messages_cannot_read_or_change_anything(bot_handlers
     for name, callback in handlers.items():
         if name == "menu_callback":
             continue
-        if name in {"model_command", "prompt_command", "limit_command", "remember_command", "forget_command", "recipe_command", "revoke_command"}:
+        if name in {"model_command", "prompt_command", "limit_command", "remember_command", "forget_command", "recipe_command", "revoke_command", "language_command"}:
             await callback(incoming, SimpleNamespace(args="gpt-4.1-mini"))
         else:
             await callback(incoming)

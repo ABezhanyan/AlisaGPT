@@ -6,6 +6,7 @@ import time
 from datetime import datetime, timezone
 import httpx
 from .recipes import is_recipe_request, recipe_title
+from .languages import CONFIRMATIONS, LANGUAGE_INSTRUCTIONS, requested_language
 from .web_search import city_reply, clean_voice_answer, has_explicit_city, is_general_news_question, is_weather_question, needs_web_search, parse_web_answer
 
 class UserError(Exception):
@@ -44,14 +45,14 @@ class Assistant:
             if not cache or time.time() - cache["fetched"] > 14400:
                 await self._refresh_cache(user_id, key, "Главные новости сегодня", True)
 
-    def _schedule_refresh(self, user_id, key, query, news=False):
-        task = asyncio.create_task(self._refresh_cache(user_id, key, query, news))
+    def _schedule_refresh(self, user_id, key, query, news=False, language="ru"):
+        task = asyncio.create_task(self._refresh_cache(user_id, key, query, news, language))
         self.refresh_tasks.add(task)
         task.add_done_callback(self.refresh_tasks.discard)
 
-    async def _refresh_cache(self, user_id, key, query, news):
+    async def _refresh_cache(self, user_id, key, query, news, language="ru"):
         try:
-            answer, sources = await self._search_web(user_id, query, "Ты голосовой помощник. Отвечай по-русски без Markdown.", [], news)
+            answer, sources = await self._search_web(user_id, query, "Ты голосовой помощник. Отвечай без Markdown.", [], news, language)
             self.store.save_web_cache(key, answer, sources)
         except (UserError, httpx.HTTPError, ValueError, KeyError, IndexError, sqlite3.Error):
             pass
@@ -82,13 +83,14 @@ class Assistant:
                 # The saved copy remains available through /recipe even if delivery fails.
                 continue
 
-    async def _search_web(self, user_id, text, instructions, history, news=False):
+    async def _search_web(self, user_id, text, instructions, history, news=False, language="ru"):
         if not self.store.reserve_web_search(user_id, self.settings.web_search_daily_limit):
             raise UserError("Дневной лимит поиска в интернете исчерпан. Попробуйте завтра.")
         if news:
             instructions += "\nСоставь обзор 4–5 существенных событий за сегодня по минимум трём независимым публикациям разных изданий, включая международные западные и русскоязычные. Сопоставь факты и различай подтверждённое и оценки. Дай больше контекста, но уложись в 800 символов. Не перечисляй источники, названия СМИ, адреса или ссылки в тексте ответа."
         else:
-            instructions += "\nДля актуальных сведений используй найденные источники. Ответь по-русски кратко и конкретно. Не называй источники, адреса или ссылки в тексте ответа."
+            instructions += "\nДля актуальных сведений используй найденные источники. Ответь кратко и конкретно. Не называй источники, адреса или ссылки в тексте ответа."
+        instructions += "\n" + LANGUAGE_INSTRUCTIONS[language]
         request = {
             "model": "gpt-6-luna", "reasoning": {"effort": "none"},
             "instructions": instructions,
@@ -112,7 +114,12 @@ class Assistant:
         if len(text) > 4000:
             raise UserError("Сократите сообщение до 4000 символов.")
         async with self.locks.setdefault(user_id, asyncio.Lock()):
+            if language := requested_language(text):
+                self.store.update_settings(user_id, language=language)
+                return CONFIRMATIONS[language]
             original_text = text
+            profile = self.store.settings(user_id)
+            language = profile.get("language", "ru")
             pending_weather = self.store.take_pending_weather(user_id)
             city_was_saved = False
             if pending_weather:
@@ -125,12 +132,15 @@ class Assistant:
                     text = f"{text} для города {city}"
                 else:
                     self.store.ask_weather_city(user_id, text)
-                    return "Для какого города нужна погода? Назовите город, и я запомню его для следующих прогнозов."
-            profile = self.store.settings(user_id)
+                    return {
+                        "ru": "Для какого города нужна погода? Назовите город, и я запомню его для следующих прогнозов.",
+                        "en": "Which city would you like the weather for? Tell me the city, and I'll remember it for future forecasts.",
+                        "hy": "Ո՞ր քաղաքի եղանակն է ձեզ հետաքրքրում։ Ասեք քաղաքի անունը, և ես այն կհիշեմ հաջորդ կանխատեսումների համար։",
+                    }[language]
             if not self.store.reserve_request(user_id, profile["daily_limit"]):
                 raise UserError("Дневной лимит запросов исчерпан.")
             try:
-                messages = [{"role": "system", "content": profile["prompt"]}]
+                messages = [{"role": "system", "content": profile["prompt"]}, {"role": "system", "content": LANGUAGE_INSTRUCTIONS[language]}]
                 memories = self.store.relevant_memories(user_id, text)
                 if memories:
                     facts = "\n".join(f'- {item["fact"]}' for item in memories)
@@ -139,7 +149,7 @@ class Assistant:
                 if needs_web_search(text):
                     news = is_general_news_question(original_text)
                     today = datetime.now(timezone.utc).date().isoformat()
-                    cache_key = f"news:{today}" if news else f"query:{today}:{text.lower().strip()}"
+                    cache_key = f"news:{today}" if news and language == "ru" else f"query:{today}:{language}:{text.lower().strip()}"
                     cache = self.store.web_cache(cache_key)
                     age = time.time() - cache["fetched"] if cache else float("inf")
                     fresh_for = 3600 if news else 600
@@ -147,9 +157,9 @@ class Assistant:
                         answer, sources = cache["answer"], cache["sources"]
                     elif cache and age < (7200 if news else 1200):
                         answer, sources = cache["answer"], cache["sources"]
-                        self._schedule_refresh(user_id, cache_key, text, news)
+                        self._schedule_refresh(user_id, cache_key, text, news, language)
                     else:
-                        answer, sources = await self._search_web(user_id, text, "\n".join(message["content"] for message in messages), self.store.history(user_id), news)
+                        answer, sources = await self._search_web(user_id, text, "\n".join(message["content"] for message in messages), self.store.history(user_id), news, language)
                         self.store.save_web_cache(cache_key, answer, sources)
                 else:
                     request = {"model": profile["model"], "messages": [*messages, *self.store.history(user_id), {"role": "user", "content": text}], "max_completion_tokens": 300}
