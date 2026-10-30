@@ -78,6 +78,29 @@ async def test_alice_link_endpoint(store):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('command', ['выход', 'верни алису', 'обычная Алиса'])
+async def test_alice_quick_exit_returns_to_alice_without_openai(store, command):
+    linked(store)
+    calls = []
+
+    def provider(request):
+        calls.append(request)
+        return httpx.Response(200, json={'choices': [{'message': {'content': 'Ответ'}}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as upstream:
+        assistant = Assistant(settings(), store, upstream)
+        app = create_app(settings(), store, assistant)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url='http://test') as client:
+            response = await client.post('/alice/test-webhook-secret', json=payload(command))
+
+    assert response.status_code == 200
+    assert response.json()['response'] == {'text': 'Возвращаюсь к Алисе.', 'end_session': True}
+    assert calls == []
+    assert store.history('telegram-owner') == []
+    assert store.usage('telegram-owner') == 0
+
+
+@pytest.mark.asyncio
 async def test_shared_history_and_alice_deduplication(store):
     requests = []
 
@@ -165,3 +188,4 @@ async def test_alice_slow_answer_is_retrieved_without_second_generation(store):
             assert result.json()['response']['text'] == 'Готовый ответ'
             assert len(calls) == 1
             assert len(store.history('telegram-owner')) == 2
+

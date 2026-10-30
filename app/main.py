@@ -32,8 +32,8 @@ def create_app(settings=None, store=None, assistant=None):
     async def health():
         return {"status":"ok", "openai_configured":bool(settings.alisagpt_api_key), "alice_configured":bool(settings.alice_skill_id and settings.alice_webhook_token)}
 
-    def reply(text):
-        return {"version":"1.0", "response":{"text":text[:1024], "end_session":False}}
+    def reply(text, end_session=False):
+        return {"version":"1.0", "response":{"text":text[:1024], "end_session":end_session}}
 
     async def take_result(user_id, wait):
         task = pending[user_id]
@@ -72,7 +72,11 @@ def create_app(settings=None, store=None, assistant=None):
         command = command.strip()
         user_id = store.linked_user(alice_id)
         digits = re.sub(r'\D', '', command)
-        if not user_id and len(digits) == 8:
+        if command.lower() in {'выход', 'выйти', 'вернись', 'хватит', 'обычная алиса', 'верни алису', 'закрой навык'}:
+            if user_id in pending:
+                pending.pop(user_id).cancel()
+            result = reply('Возвращаюсь к Алисе.', end_session=True)
+        elif not user_id and len(digits) == 8:
             now = time.monotonic()
             while attempts and attempts[0]<now-60: attempts.popleft()
             if len(attempts)>=5: return reply('Слишком много попыток. Подождите минуту.')
@@ -95,3 +99,4 @@ def create_app(settings=None, store=None, assistant=None):
         if len(cache)>1000: cache.popitem(last=False)
         return result
     return app
+
