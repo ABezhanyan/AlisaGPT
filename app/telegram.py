@@ -40,6 +40,8 @@ HELP = """Я — ваш помощник и панель управления н
 /remember <факт> — сохранить факт надолго
 /memories — показать постоянную память
 /forget <номер|all> — удалить факт или всю память
+/recipes — список рецептов, сохранённых со Станции
+/recipe <номер> — открыть сохранённый рецепт
 /help — показать команды
 
 Или просто напишите сообщение: история общая с привязанной Алисой."""
@@ -161,6 +163,30 @@ async def run_bot(settings, store, assistant):
             if arg == "all":
                 arg = "всё"
             await message.answer(handle_memory_command(store, user_id, "забудь " + arg) or "Используйте /forget <номер|all>.")
+
+    @dispatcher.message(Command("recipes"))
+    async def recipes_command(message: Message):
+        if user_id := owner(message):
+            items = store.recipes(user_id)
+            if not items:
+                await message.answer("Сохранённых рецептов пока нет.")
+            else:
+                await send(message, "Сохранённые рецепты:\n" + "\n".join(f'{item["id"]}. {item["request"]}' for item in items) + "\nОткрыть: /recipe <номер>")
+
+    @dispatcher.message(Command("recipe"))
+    async def recipe_command(message: Message, command: CommandObject):
+        if not (user_id := owner(message)):
+            return
+        try:
+            recipe_id = int((command.args or "").strip())
+        except ValueError:
+            await message.answer("Используйте /recipe <номер>.")
+            return
+        item = store.recipe(user_id, recipe_id)
+        if not item:
+            await message.answer("Рецепт не найден.")
+            return
+        await send(message, f'{item["request"]}\n\n{item["answer"]}')
 
     @dispatcher.message(F.text)
     async def chat(message: Message):

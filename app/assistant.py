@@ -5,6 +5,7 @@ import sqlite3
 import time
 from datetime import datetime, timezone
 import httpx
+from .recipes import is_recipe_request
 from .web_search import city_reply, clean_voice_answer, has_explicit_city, is_general_news_question, is_weather_question, needs_web_search, parse_web_answer
 
 class UserError(Exception):
@@ -17,6 +18,7 @@ class Assistant:
         self.locks = {}
         self.learning_tasks = set()
         self.refresh_tasks = set()
+        self.delivery_tasks = set()
 
     async def start(self):
         if not self.settings.alisagpt_api_key or self.settings.telegram_owner_id <= 0:
@@ -44,10 +46,26 @@ class Assistant:
             pass
 
     async def close(self):
-        for task in self.learning_tasks | self.refresh_tasks:
+        for task in self.learning_tasks | self.refresh_tasks | self.delivery_tasks:
             task.cancel()
-        await asyncio.gather(*(self.learning_tasks | self.refresh_tasks), return_exceptions=True)
+        await asyncio.gather(*(self.learning_tasks | self.refresh_tasks | self.delivery_tasks), return_exceptions=True)
         await self.client.aclose()
+
+    async def _send_recipe(self, recipe_id, request, answer):
+        if not self.settings.telegram_bot_token or self.settings.telegram_owner_id <= 0:
+            return
+        text = f"Сохранён рецепт №{recipe_id} со Станции.\n{request}\n\n{answer}"
+        try:
+            for offset in range(0, len(text), 3900):
+                response = await self.client.post(
+                    f"https://api.telegram.org/bot{self.settings.telegram_bot_token}/sendMessage",
+                    json={"chat_id": self.settings.telegram_owner_id, "text": text[offset:offset + 3900]},
+                    timeout=8,
+                )
+                response.raise_for_status()
+        except httpx.HTTPError:
+            # The saved copy remains available through /recipe even if delivery fails.
+            pass
 
     async def _search_web(self, user_id, text, instructions, history, news=False):
         if not self.store.reserve_web_search(user_id, self.settings.web_search_daily_limit):
@@ -135,6 +153,11 @@ class Assistant:
             except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
                 raise UserError("Сервис ответа временно недоступен. Попробуйте позже.") from exc
             self.store.add_exchange(user_id, original_text, answer)
+            if channel == "voice" and is_recipe_request(original_text):
+                recipe_id = self.store.save_recipe(user_id, original_text, answer)
+                task = asyncio.create_task(self._send_recipe(recipe_id, original_text, answer))
+                self.delivery_tasks.add(task)
+                task.add_done_callback(self.delivery_tasks.discard)
             task = asyncio.create_task(self._learn_facts(user_id, original_text))
             self.learning_tasks.add(task)
             task.add_done_callback(self.learning_tasks.discard)

@@ -25,6 +25,8 @@ class Store:
         CREATE TABLE IF NOT EXISTS web_usage(user_id TEXT, day TEXT, count INTEGER, PRIMARY KEY(user_id, day));
         CREATE TABLE IF NOT EXISTS pending_weather(user_id TEXT PRIMARY KEY, question TEXT NOT NULL, created REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS web_cache(cache_key TEXT PRIMARY KEY, answer TEXT NOT NULL, sources TEXT NOT NULL, fetched REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS recipes(id INTEGER PRIMARY KEY, user_id TEXT NOT NULL, request TEXT NOT NULL, answer TEXT NOT NULL, created REAL NOT NULL);
+        CREATE INDEX IF NOT EXISTS recipes_user ON recipes(user_id, created DESC);
         CREATE TABLE IF NOT EXISTS memories(id INTEGER PRIMARY KEY, user_id TEXT NOT NULL, fact TEXT NOT NULL, source TEXT NOT NULL, created REAL NOT NULL, UNIQUE(user_id, fact));
         CREATE INDEX IF NOT EXISTS memories_user ON memories(user_id, created DESC);
         ''')
@@ -121,6 +123,18 @@ class Store:
     def save_web_cache(self, cache_key, answer, sources):
         with self.db:
             self.db.execute("INSERT OR REPLACE INTO web_cache VALUES(?,?,?,?)", (cache_key, answer, json.dumps(sources), time.time()))
+
+    def save_recipe(self, user_id, request, answer):
+        with self.db:
+            cursor = self.db.execute("INSERT INTO recipes(user_id, request, answer, created) VALUES(?,?,?,?)", (user_id, request[:300], answer[:5000], time.time()))
+            return cursor.lastrowid
+
+    def recipes(self, user_id, limit=20):
+        return [dict(row) for row in self.db.execute("SELECT id, request FROM recipes WHERE user_id=? ORDER BY id DESC LIMIT ?", (user_id, limit))]
+
+    def recipe(self, user_id, recipe_id):
+        row = self.db.execute("SELECT id, request, answer FROM recipes WHERE user_id=? AND id=?", (user_id, recipe_id)).fetchone()
+        return dict(row) if row else None
 
     def known_weather_cities(self):
         rows = self.db.execute("SELECT DISTINCT substr(fact, length('Город для прогноза погоды: ') + 1) FROM memories WHERE fact LIKE 'Город для прогноза погоды: %'").fetchall()
