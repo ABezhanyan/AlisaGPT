@@ -8,7 +8,7 @@ from pathlib import Path
 DEFAULT_PROMPT = "Ты голосовой помощник. Отвечай по-русски, кратко и понятно, без Markdown."
 
 class Store:
-    def __init__(self, path, model="gpt-4.1-mini", daily_limit=100):
+    def __init__(self, path, model="gpt-6-luna", daily_limit=100):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row

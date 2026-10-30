@@ -8,6 +8,6 @@ class Settings(BaseSettings):
     alice_skill_id: str = ""
     alice_webhook_token: str = ""
     database_path: str = "data/alisagpt.sqlite3"
-    default_model: str = "gpt-4.1-mini"
-    allowed_models: tuple[str, ...] = ("gpt-4.1-mini", "gpt-4.1", "gpt-4.1-nano")
+    default_model: str = "gpt-6-luna"
+    allowed_models: tuple[str, ...] = ("gpt-6-luna", "gpt-4.1-mini", "gpt-4.1", "gpt-4.1-nano")
     daily_limit: int = 100

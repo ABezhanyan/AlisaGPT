@@ -20,7 +20,10 @@ class Assistant:
             if not self.store.reserve_request(user_id, profile["daily_limit"]):
                 raise UserError("Дневной лимит запросов исчерпан.")
             try:
-                response = await self.client.post("https://api.openai.com/v1/chat/completions", headers={"Authorization": f"Bearer {self.settings.alisagpt_api_key}"}, json={"model":profile["model"],"messages":[{"role":"system","content":profile["prompt"]},*self.store.history(user_id),{"role":"user","content":text}],"max_completion_tokens":300})
+                request = {"model": profile["model"], "messages": [{"role": "system", "content": profile["prompt"]}, *self.store.history(user_id), {"role": "user", "content": text}], "max_completion_tokens": 300}
+                if profile["model"] == "gpt-6-luna":
+                    request["reasoning_effort"] = "none"
+                response = await self.client.post("https://api.openai.com/v1/chat/completions", headers={"Authorization": f"Bearer {self.settings.alisagpt_api_key}"}, json=request)
                 response.raise_for_status()
                 answer = response.json()["choices"][0]["message"]["content"]
                 if not isinstance(answer, str) or not answer.strip(): raise ValueError("Empty answer")
