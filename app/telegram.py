@@ -11,6 +11,7 @@ from aiogram.filters.command import CommandObject
 from aiogram.types import Message
 
 from app.assistant import UserError
+from app.memory_commands import handle_memory_command
 
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,9 @@ HELP = """Я — ваш помощник и панель управления н
 /limit <число> — установить дневной лимит запросов
 /usage — настройки и расход запросов за сегодня
 /reset — очистить общую историю диалога
+/remember <факт> — сохранить факт надолго
+/memories — показать постоянную память
+/forget <номер|all> — удалить факт или всю память
 /help — показать команды
 
 Или просто напишите сообщение: история общая с привязанной Алисой."""
@@ -139,6 +143,24 @@ async def run_bot(settings, store, assistant):
             store.clear_history(user_id)
             await message.answer("Общая история Алисы и Telegram очищена.")
 
+    @dispatcher.message(Command("remember"))
+    async def remember_command(message: Message, command: CommandObject):
+        if user_id := owner(message):
+            await message.answer(handle_memory_command(store, user_id, "запомни " + (command.args or "")))
+
+    @dispatcher.message(Command("memories"))
+    async def memories_command(message: Message):
+        if user_id := owner(message):
+            await send(message, handle_memory_command(store, user_id, "что ты помнишь", max_items=1000))
+
+    @dispatcher.message(Command("forget"))
+    async def forget_command(message: Message, command: CommandObject):
+        if user_id := owner(message):
+            arg = (command.args or "").strip().lower()
+            if arg == "all":
+                arg = "всё"
+            await message.answer(handle_memory_command(store, user_id, "забудь " + arg) or "Используйте /forget <номер|all>.")
+
     @dispatcher.message(F.text)
     async def chat(message: Message):
         if not (user_id := owner(message)):
@@ -149,6 +171,9 @@ async def run_bot(settings, store, assistant):
             return
         if len(text) > 4000:
             await message.answer("Сократите сообщение до 4000 символов.")
+            return
+        if (memory_reply := handle_memory_command(store, user_id, text)) is not None:
+            await send(message, memory_reply)
             return
         try:
             response = await assistant.reply(user_id, text)

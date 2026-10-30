@@ -1,4 +1,5 @@
 import hashlib
+import re
 import secrets
 import sqlite3
 import time
@@ -20,6 +21,8 @@ class Store:
         CREATE TABLE IF NOT EXISTS links(alice_id TEXT PRIMARY KEY, user_id TEXT);
         CREATE TABLE IF NOT EXISTS codes(hash TEXT PRIMARY KEY, user_id TEXT, expires REAL);
         CREATE TABLE IF NOT EXISTS usage(user_id TEXT, day TEXT, count INTEGER, PRIMARY KEY(user_id, day));
+        CREATE TABLE IF NOT EXISTS memories(id INTEGER PRIMARY KEY, user_id TEXT NOT NULL, fact TEXT NOT NULL, source TEXT NOT NULL, created REAL NOT NULL, UNIQUE(user_id, fact));
+        CREATE INDEX IF NOT EXISTS memories_user ON memories(user_id, created DESC);
         ''')
         self.db.commit()
 
@@ -47,6 +50,33 @@ class Store:
 
     def clear_history(self, user_id):
         self.db.execute("DELETE FROM history WHERE user_id=?", (user_id,)); self.db.commit()
+
+    def remember(self, user_id, fact, source="manual"):
+        fact = " ".join(fact.strip().split())
+        if not fact or len(fact) > 300:
+            raise ValueError("Fact must contain 1-300 characters")
+        if re.search(r"(?i)(sk-[a-z0-9_-]{12,}|парол|токен|api.?key|секрет|\b\d{12,}\b)", fact):
+            raise ValueError("Secrets cannot be saved")
+        with self.db:
+            self.db.execute("INSERT OR IGNORE INTO memories(user_id, fact, source, created) VALUES(?,?,?,?)", (user_id, fact, source, time.time()))
+
+    def memories(self, user_id):
+        return [dict(row) for row in self.db.execute("SELECT id, fact, source FROM memories WHERE user_id=? ORDER BY created DESC, id DESC", (user_id,))]
+
+    def forget(self, user_id, memory_id=None):
+        with self.db:
+            if memory_id is None:
+                return self.db.execute("DELETE FROM memories WHERE user_id=?", (user_id,)).rowcount
+            return self.db.execute("DELETE FROM memories WHERE user_id=? AND id=?", (user_id, memory_id)).rowcount
+
+    def relevant_memories(self, user_id, text, limit=20):
+        facts = self.memories(user_id)
+        words = set(re.findall(r"[\wа-яё]{4,}", text.lower()))
+        ranked = sorted(facts, key=lambda row: (
+            len(words & set(re.findall(r"[\wа-яё]{4,}", row["fact"].lower()))),
+            row["source"] == "manual",
+            row["id"]), reverse=True)
+        return ranked[:limit]
 
     def usage(self, user_id):
         row = self.db.execute("SELECT count FROM usage WHERE user_id=? AND day=?", (user_id,datetime.now(timezone.utc).date().isoformat())).fetchone()

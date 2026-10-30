@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException, Request
 from .assistant import Assistant, UserError
 from .config import Settings
 from .store import Store
+from .memory_commands import handle_memory_command
 
 
 def create_app(settings=None, store=None, assistant=None):
@@ -86,6 +87,8 @@ def create_app(settings=None, store=None, assistant=None):
             else: result = reply('Код неверный или истёк. Получите новый код командой /link в Telegram.')
         elif not user_id:
             result = reply('Откройте своего Telegram-бота, отправьте /link и произнесите восьмизначный код цифрами.')
+        elif (memory_reply := handle_memory_command(store, user_id, command, max_items=10)) is not None:
+            result = reply(memory_reply)
         elif user_id in pending:
             result = await take_result(user_id, 0 if command.lower() in {'продолжи','ответ','готово'} else 2.5)
         elif not command or session.get('new') and command.lower() in {'продолжи','ответ'}:
@@ -99,4 +102,3 @@ def create_app(settings=None, store=None, assistant=None):
         if len(cache)>1000: cache.popitem(last=False)
         return result
     return app
-

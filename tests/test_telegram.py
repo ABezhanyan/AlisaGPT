@@ -57,7 +57,7 @@ async def test_unauthorized_messages_cannot_read_or_change_anything(bot_handlers
     handlers, _, store, assistant = bot_handlers
     incoming = message(user, chat_type)
     for name, callback in handlers.items():
-        if name in {"model_command", "prompt_command", "limit_command"}:
+        if name in {"model_command", "prompt_command", "limit_command", "remember_command", "forget_command"}:
             await callback(incoming, SimpleNamespace(args="gpt-4.1-mini"))
         else:
             await callback(incoming)
