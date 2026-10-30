@@ -27,6 +27,8 @@ class Store:
         CREATE TABLE IF NOT EXISTS web_cache(cache_key TEXT PRIMARY KEY, answer TEXT NOT NULL, sources TEXT NOT NULL, fetched REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS recipes(id INTEGER PRIMARY KEY, user_id TEXT NOT NULL, request TEXT NOT NULL, answer TEXT NOT NULL, created REAL NOT NULL);
         CREATE INDEX IF NOT EXISTS recipes_user ON recipes(user_id, created DESC);
+        CREATE TABLE IF NOT EXISTS telegram_invites(hash TEXT PRIMARY KEY, owner_id TEXT NOT NULL, expires REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS telegram_access(user_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, created REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS memories(id INTEGER PRIMARY KEY, user_id TEXT NOT NULL, fact TEXT NOT NULL, source TEXT NOT NULL, created REAL NOT NULL, UNIQUE(user_id, fact));
         CREATE INDEX IF NOT EXISTS memories_user ON memories(user_id, created DESC);
         ''')
@@ -160,6 +162,35 @@ class Store:
             self.db.execute("DELETE FROM codes WHERE user_id=? OR expires<?", (user_id,time.time()))
             self.db.execute("INSERT INTO codes VALUES(?,?,?)", (hashlib.sha256(code.encode()).hexdigest(),user_id,time.time()+300))
         return code
+
+    def create_telegram_invite(self, owner_id):
+        code = secrets.token_urlsafe(12)
+        with self.db:
+            self.db.execute("DELETE FROM telegram_invites WHERE expires<?", (time.time(),))
+            self.db.execute("INSERT INTO telegram_invites VALUES(?,?,?)", (hashlib.sha256(code.encode()).hexdigest(), owner_id, time.time()+86400))
+        return code
+
+    def redeem_telegram_invite(self, user_id, code, owner_id):
+        if not code or len(code) > 100 or user_id == owner_id:
+            return False
+        digest = hashlib.sha256(code.encode()).hexdigest()
+        with self.db:
+            row = self.db.execute("SELECT owner_id FROM telegram_invites WHERE hash=? AND expires>?", (digest, time.time())).fetchone()
+            if not row or row[0] != owner_id:
+                return False
+            self.db.execute("DELETE FROM telegram_invites WHERE hash=?", (digest,))
+            self.db.execute("INSERT OR REPLACE INTO telegram_access VALUES(?,?,?)", (user_id, owner_id, time.time()))
+        return True
+
+    def has_telegram_access(self, user_id, owner_id):
+        return self.db.execute("SELECT 1 FROM telegram_access WHERE user_id=? AND owner_id=?", (user_id, owner_id)).fetchone() is not None
+
+    def telegram_guests(self, owner_id):
+        return [row[0] for row in self.db.execute("SELECT user_id FROM telegram_access WHERE owner_id=? ORDER BY created DESC", (owner_id,))]
+
+    def revoke_telegram_access(self, owner_id, user_id):
+        with self.db:
+            return self.db.execute("DELETE FROM telegram_access WHERE owner_id=? AND user_id=?", (owner_id, user_id)).rowcount > 0
 
     def redeem_code(self, alice_id, code):
         with self.db:

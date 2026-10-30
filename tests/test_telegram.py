@@ -48,6 +48,7 @@ async def bot_handlers(monkeypatch):
         allowed_models=("gpt-4.1-mini", "gpt-4.1"),
     )
     store = Mock()
+    store.has_telegram_access.return_value = False
     assistant = SimpleNamespace(reply=AsyncMock(return_value="Ответ"))
     await telegram.run_bot(settings, store, assistant)
     return handlers, settings, store, assistant
@@ -68,13 +69,14 @@ async def test_unauthorized_messages_cannot_read_or_change_anything(bot_handlers
     for name, callback in handlers.items():
         if name == "menu_callback":
             continue
-        if name in {"model_command", "prompt_command", "limit_command", "remember_command", "forget_command", "recipe_command"}:
+        if name in {"model_command", "prompt_command", "limit_command", "remember_command", "forget_command", "recipe_command", "revoke_command"}:
             await callback(incoming, SimpleNamespace(args="gpt-4.1-mini"))
         else:
             await callback(incoming)
-    assert store.mock_calls == []
+    assert all(call[0] == "has_telegram_access" for call in store.mock_calls)
     assistant.reply.assert_not_awaited()
-    incoming.answer.assert_not_awaited()
+    if chat_type == "group":
+        incoming.answer.assert_not_awaited()
 
 
 @pytest.mark.parametrize("model", [None, "unknown-model", "gpt-4.1-mini extra"])
@@ -113,6 +115,27 @@ async def test_recipe_buttons_open_saved_recipe_for_owner(bot_handlers):
     await handlers["menu_callback"](callback)
     store.recipe.assert_called_once_with("42", 7)
     assert "Ингредиенты" in incoming.answer.await_args.args[0]
+
+
+async def test_invited_guest_uses_owner_history_and_cannot_link_station(bot_handlers):
+    handlers, _, store, assistant = bot_handlers
+    store.has_telegram_access.return_value = True
+    guest = message(user=99)
+    await handlers["chat"](guest)
+    assistant.reply.assert_awaited_once_with("42", "Привет", channel="telegram")
+    await handlers["link_command"](guest)
+    store.create_link_code.assert_not_called()
+    await handlers["model_command"](guest, SimpleNamespace(args="gpt-4.1-mini"))
+    store.update_settings.assert_not_called()
+
+
+async def test_guest_can_join_from_one_time_start_link(bot_handlers):
+    handlers, _, store, _ = bot_handlers
+    store.redeem_telegram_invite.return_value = True
+    guest = message(user=99)
+    await handlers["help_command"](guest, SimpleNamespace(args="one-time-code"))
+    store.redeem_telegram_invite.assert_called_once_with("99", "one-time-code", "42")
+    assert "Доступ открыт" in guest.answer.await_args.args[0]
 
 
 @pytest.mark.parametrize("owner,token", [(0, "unused"), (42, "")])

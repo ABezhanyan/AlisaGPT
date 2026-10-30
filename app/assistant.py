@@ -68,17 +68,19 @@ class Assistant:
         if not self.settings.telegram_bot_token or self.settings.telegram_owner_id <= 0:
             return
         text = f"Сохранён рецепт №{recipe_id} со Станции.\n{request}\n\n{answer}"
-        try:
-            for offset in range(0, len(text), 3900):
-                response = await self.client.post(
-                    f"https://api.telegram.org/bot{self.settings.telegram_bot_token}/sendMessage",
-                    json={"chat_id": self.settings.telegram_owner_id, "text": text[offset:offset + 3900]},
-                    timeout=8,
-                )
-                response.raise_for_status()
-        except httpx.HTTPError:
-            # The saved copy remains available through /recipe even if delivery fails.
-            pass
+        recipients = [str(self.settings.telegram_owner_id), *self.store.telegram_guests(str(self.settings.telegram_owner_id))]
+        for recipient in recipients:
+            try:
+                for offset in range(0, len(text), 3900):
+                    response = await self.client.post(
+                        f"https://api.telegram.org/bot{self.settings.telegram_bot_token}/sendMessage",
+                        json={"chat_id": recipient, "text": text[offset:offset + 3900]},
+                        timeout=8,
+                    )
+                    response.raise_for_status()
+            except httpx.HTTPError:
+                # The saved copy remains available through /recipe even if delivery fails.
+                continue
 
     async def _search_web(self, user_id, text, instructions, history, news=False):
         if not self.store.reserve_web_search(user_id, self.settings.web_search_daily_limit):
