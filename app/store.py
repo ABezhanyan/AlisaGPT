@@ -10,11 +10,11 @@ from pathlib import Path
 DEFAULT_PROMPT = "Ты голосовой помощник. Отвечай по-русски, кратко и понятно, без Markdown."
 
 class Store:
-    def __init__(self, path, model="gpt-6-luna", daily_limit=100):
+    def __init__(self, path, model="gpt-6-luna"):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
-        self.model, self.daily_limit = model, daily_limit
+        self.model = model
         self.db.executescript('''
         PRAGMA journal_mode=WAL;
         CREATE TABLE IF NOT EXISTS profiles(id TEXT PRIMARY KEY, model TEXT, prompt TEXT, daily_limit INTEGER);
@@ -38,14 +38,14 @@ class Store:
         self.db.commit()
 
     def settings(self, user_id):
-        self.db.execute("INSERT OR IGNORE INTO profiles(id,model,prompt,daily_limit,language) VALUES(?,?,?,?,?)", (user_id, self.model, DEFAULT_PROMPT, self.daily_limit, "ru"))
+        self.db.execute("INSERT OR IGNORE INTO profiles(id,model,prompt,daily_limit,language) VALUES(?,?,?,?,?)", (user_id, self.model, DEFAULT_PROMPT, 0, "ru"))
         self.db.commit()
         return dict(self.db.execute("SELECT * FROM profiles WHERE id=?", (user_id,)).fetchone())
 
     def update_settings(self, user_id, **kwargs):
         self.settings(user_id)
         for key, value in kwargs.items():
-            if key not in {"model", "prompt", "daily_limit", "language"}:
+            if key not in {"model", "prompt", "language"}:
                 raise ValueError("Unknown setting")
             if key == "language" and value not in {"ru", "en", "hy"}:
                 raise ValueError("Unknown language")
@@ -129,17 +129,17 @@ class Store:
         row = self.db.execute("SELECT count FROM voice_usage WHERE user_id=? AND day=?", (user_id, datetime.now(timezone.utc).date().isoformat())).fetchone()
         return row[0] if row else 0
 
-    def reserve_voice(self, user_id, limit):
+    def record_voice(self, user_id):
         day = datetime.now(timezone.utc).date().isoformat()
         with self.db:
             self.db.execute("INSERT OR IGNORE INTO voice_usage VALUES(?,?,0)", (user_id, day))
-            return self.db.execute("UPDATE voice_usage SET count=count+1 WHERE user_id=? AND day=? AND count<?", (user_id, day, limit)).rowcount == 1
+            self.db.execute("UPDATE voice_usage SET count=count+1 WHERE user_id=? AND day=?", (user_id, day))
 
-    def reserve_web_search(self, user_id, limit):
+    def record_web_search(self, user_id):
         day = datetime.now(timezone.utc).date().isoformat()
         with self.db:
             self.db.execute("INSERT OR IGNORE INTO web_usage VALUES(?,?,0)", (user_id, day))
-            return self.db.execute("UPDATE web_usage SET count=count+1 WHERE user_id=? AND day=? AND count<?", (user_id, day, limit)).rowcount == 1
+            self.db.execute("UPDATE web_usage SET count=count+1 WHERE user_id=? AND day=?", (user_id, day))
 
     def web_cache(self, cache_key):
         row = self.db.execute("SELECT answer, sources, fetched FROM web_cache WHERE cache_key=?", (cache_key,)).fetchone()
@@ -173,11 +173,11 @@ class Store:
         row = self.db.execute("SELECT count FROM usage WHERE user_id=? AND day=?", (user_id,datetime.now(timezone.utc).date().isoformat())).fetchone()
         return row[0] if row else 0
 
-    def reserve_request(self, user_id, limit):
+    def record_request(self, user_id):
         day = datetime.now(timezone.utc).date().isoformat()
         with self.db:
             self.db.execute("INSERT OR IGNORE INTO usage VALUES(?,?,0)", (user_id,day))
-            return self.db.execute("UPDATE usage SET count=count+1 WHERE user_id=? AND day=? AND count<?", (user_id,day,limit)).rowcount == 1
+            self.db.execute("UPDATE usage SET count=count+1 WHERE user_id=? AND day=?", (user_id,day))
 
     def create_link_code(self, user_id):
         code = str(secrets.randbelow(90000000) + 10000000)
@@ -231,4 +231,3 @@ class Store:
         with self.db:
             self.db.execute("DELETE FROM links WHERE user_id=?", (user_id,))
             self.db.execute("DELETE FROM codes WHERE user_id=?", (user_id,))
-

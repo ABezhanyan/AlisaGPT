@@ -46,7 +46,6 @@ async def bot_handlers(monkeypatch):
     settings = SimpleNamespace(
         telegram_bot_token="unused", telegram_owner_id=42,
         allowed_models=("gpt-4.1-mini", "gpt-4.1"),
-        voice_daily_limit=10,
     )
     store = Mock()
     store.has_telegram_access.return_value = False
@@ -72,7 +71,7 @@ async def test_unauthorized_messages_cannot_read_or_change_anything(bot_handlers
     for name, callback in handlers.items():
         if name == "menu_callback":
             continue
-        if name in {"model_command", "prompt_command", "limit_command", "remember_command", "forget_command", "recipe_command", "revoke_command", "language_command"}:
+        if name in {"model_command", "prompt_command", "remember_command", "forget_command", "recipe_command", "revoke_command", "language_command"}:
             await callback(incoming, SimpleNamespace(args="gpt-4.1-mini"))
         else:
             await callback(incoming)
@@ -176,4 +175,3 @@ def test_bot_session_preserves_proxy_and_platform_ca(monkeypatch):
     factory.assert_called_once_with(proxy="http://proxy:8080")
     tls_factory.assert_called_once_with(cafile="/platform/ca.pem")
     assert connector._connector_init["ssl"] is tls_context
-

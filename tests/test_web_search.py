@@ -53,7 +53,7 @@ async def test_news_is_prepared_in_background_and_reused_on_station(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_weather_city_is_asked_then_remembered_and_web_search_is_limited(tmp_path):
+async def test_weather_city_is_asked_then_remembered_without_search_quota(tmp_path):
     store = Store(tmp_path / "weather.sqlite3")
     requests = []
 
@@ -62,7 +62,7 @@ async def test_weather_city_is_asked_then_remembered_and_web_search_is_limited(t
         return provider(request)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(record)) as upstream:
-        assistant = Assistant(settings(web_search_daily_limit=1), store, upstream)
+        assistant = Assistant(settings(), store, upstream)
         assert "Для какого города" in await assistant.reply("owner", "Какая погода?")
         assert requests == []
         assert store.usage("owner") == 0
@@ -73,9 +73,9 @@ async def test_weather_city_is_asked_then_remembered_and_web_search_is_limited(t
         body = json.loads(requests[0].content)
         assert body["tools"] == [{"type": "web_search", "search_context_size": "low"}]
         assert body["max_tool_calls"] == 1
-        with pytest.raises(UserError, match="лимит поиска"):
-            await assistant.reply("owner", "Какая погода сегодня?")
-        assert len(requests) == 1
+        assert await assistant.reply("owner", "Какая погода сегодня?") == "В городе солнечно."
+        assert len(requests) == 2
+        assert store.web_usage("owner") == 2
     store.db.close()
 
 

@@ -57,7 +57,6 @@ HELP = """Я — ваш помощник и панель управления н
 /model <модель> — выбрать модель
 /language <ru|en|hy> — переключить язык ответов (общий для Станции и Telegram)
 /prompt <инструкция> — задать стиль ответов
-/limit <число> — установить дневной лимит запросов
 /usage — настройки и расход запросов, поиска и озвучивания за сегодня
 /reset — очистить общую историю диалога
 /remember <факт> — сохранить факт надолго
@@ -200,20 +199,6 @@ async def run_bot(settings, store, assistant):
         store.update_settings(user_id, prompt=prompt)
         await message.answer("Инструкция для помощника сохранена.")
 
-    @dispatcher.message(Command("limit"))
-    async def limit_command(message: Message, command: CommandObject):
-        if not (user_id := owner(message)):
-            return
-        try:
-            daily_limit = int((command.args or "").strip())
-            if not 1 <= daily_limit <= 10000:
-                raise ValueError
-        except ValueError:
-            await message.answer("Используйте /limit <целое число от 1 до 10000>.")
-            return
-        store.update_settings(user_id, daily_limit=daily_limit)
-        await message.answer(f"Дневной лимит: {daily_limit} запросов.")
-
     @dispatcher.message(Command("usage"))
     async def usage_command(message: Message):
         if user_id := authorized(message):
@@ -222,9 +207,8 @@ async def run_bot(settings, store, assistant):
                 f"Модель: {current['model']}\n"
                 f"Язык ответов: {LANGUAGE_NAMES[current.get('language', 'ru')]}\n"
                 f"Запросов сегодня (UTC): {store.usage(user_id)}\n"
-                f"Поисков в интернете сегодня (UTC): {store.web_usage(user_id)}/{settings.web_search_daily_limit}\n"
-                f"Озвучиваний сегодня (UTC): {store.voice_usage(user_id)}/{settings.voice_daily_limit}\n"
-                f"Дневной лимит: {current['daily_limit']}\n"
+                f"Поисков в интернете сегодня (UTC): {store.web_usage(user_id)}\n"
+                f"Озвучиваний сегодня (UTC): {store.voice_usage(user_id)}\n"
                 "Это счётчик запросов, не сумма списаний OpenAI."
             )
 
@@ -296,7 +280,7 @@ async def run_bot(settings, store, assistant):
             await send(message, handle_memory_command(store, user_id, "что ты помнишь", max_items=1000))
         elif action == "usage":
             current = store.settings(user_id)
-            await message.answer(f"Модель: {current['model']}\nЯзык ответов: {LANGUAGE_NAMES[current.get('language', 'ru')]}\nЗапросов сегодня (UTC): {store.usage(user_id)}\nПоисков сегодня (UTC): {store.web_usage(user_id)}/{settings.web_search_daily_limit}\nОзвучиваний сегодня (UTC): {store.voice_usage(user_id)}/{settings.voice_daily_limit}\nДневной лимит: {current['daily_limit']}", reply_markup=MENU)
+            await message.answer(f"Модель: {current['model']}\nЯзык ответов: {LANGUAGE_NAMES[current.get('language', 'ru')]}\nЗапросов сегодня (UTC): {store.usage(user_id)}\nПоисков сегодня (UTC): {store.web_usage(user_id)}\nОзвучиваний сегодня (UTC): {store.voice_usage(user_id)}", reply_markup=MENU)
         elif action.startswith("voice:") and action[6:].isdigit():
             answer = store.answer_for_voice(user_id, int(action[6:]))
             if not answer:
@@ -368,4 +352,3 @@ async def run_bot(settings, store, assistant):
             ("language", "Язык ответов"),
         ]])
         await dispatcher.start_polling(bot, allowed_updates=["message", "callback_query"])
-

@@ -84,8 +84,7 @@ class Assistant:
                 continue
 
     async def _search_web(self, user_id, text, instructions, history, news=False, language="ru"):
-        if not self.store.reserve_web_search(user_id, self.settings.web_search_daily_limit):
-            raise UserError("Дневной лимит поиска в интернете исчерпан. Попробуйте завтра.")
+        self.store.record_web_search(user_id)
         if news:
             instructions += "\nСоставь обзор 4–5 существенных событий за сегодня по минимум трём независимым публикациям разных изданий, включая международные западные и русскоязычные. Сопоставь факты и различай подтверждённое и оценки. Дай больше контекста, но уложись в 800 символов. Не перечисляй источники, названия СМИ, адреса или ссылки в тексте ответа."
         else:
@@ -111,8 +110,7 @@ class Assistant:
     async def synthesize_voice(self, user_id, answer, language=None):
         if not answer or len(answer) > 1600:
             raise UserError("Этот ответ слишком длинный для голосового сообщения.")
-        if not self.store.reserve_voice(user_id, self.settings.voice_daily_limit):
-            raise UserError("Дневной лимит голосовых сообщений исчерпан.")
+        self.store.record_voice(user_id)
         language = language or self.store.settings(user_id).get("language", "ru")
         style = {
             "ru": "Speak clearly and naturally in Russian.",
@@ -186,8 +184,7 @@ class Assistant:
                         "en": "Which city would you like the weather for? Tell me the city, and I'll remember it for future forecasts.",
                         "hy": "Ո՞ր քաղաքի եղանակն է ձեզ հետաքրքրում։ Ասեք քաղաքի անունը, և ես այն կհիշեմ հաջորդ կանխատեսումների համար։",
                     }[language]
-            if not self.store.reserve_request(user_id, profile["daily_limit"]):
-                raise UserError("Дневной лимит запросов исчерпан.")
+            self.store.record_request(user_id)
             try:
                 messages = [{"role": "system", "content": profile["prompt"]}, {"role": "system", "content": LANGUAGE_INSTRUCTIONS[language]}]
                 memories = self.store.relevant_memories(user_id, text)
@@ -268,4 +265,3 @@ class Assistant:
                     self.store.remember(user_id, fact, source="auto")
         except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError, sqlite3.Error):
             pass
-

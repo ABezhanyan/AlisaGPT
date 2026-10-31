@@ -14,7 +14,7 @@ from .memory_commands import handle_memory_command
 
 def create_app(settings=None, store=None, assistant=None):
     settings = settings or Settings()
-    store = store or Store(settings.database_path, settings.default_model, settings.daily_limit)
+    store = store or Store(settings.database_path, settings.default_model)
     assistant = assistant or Assistant(settings, store)
     pending, cache, attempts = {}, OrderedDict(), deque()
 

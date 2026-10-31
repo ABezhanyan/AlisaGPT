@@ -130,22 +130,20 @@ async def test_shared_history_and_alice_deduplication(store):
 
 
 @pytest.mark.asyncio
-async def test_quota_prevents_provider_call(store):
+async def test_requests_are_counted_without_daily_quota(store):
     requests = []
 
     def provider(request):
         requests.append(request)
         return httpx.Response(200, json={'choices': [{'message': {'content': 'Ответ'}}]})
 
-    store.update_settings('owner', daily_limit=1)
     async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as upstream:
         assistant = Assistant(settings(), store, upstream)
         await assistant.reply('owner', 'Первый вопрос')
-        with pytest.raises(UserError, match='лимит'):
-            await assistant.reply('owner', 'Второй вопрос')
-    assert len(requests) == 1
-    assert store.usage('owner') == 1
-    assert len(store.history('owner')) == 2
+        await assistant.reply('owner', 'Второй вопрос')
+    assert len(requests) == 2
+    assert store.usage('owner') == 2
+    assert len(store.history('owner')) == 4
 
 
 @pytest.mark.asyncio
@@ -190,4 +188,3 @@ async def test_alice_slow_answer_is_retrieved_without_second_generation(store):
             assert result.json()['response']['text'] == 'Готовый ответ'
             assert len(calls) == 1
             assert len(store.history('telegram-owner')) == 2
-

@@ -73,7 +73,7 @@ async def test_language_persists_and_guides_model_after_restart(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_voice_audio_is_on_demand_and_limited(tmp_path):
+async def test_voice_audio_is_on_demand_without_daily_quota(tmp_path):
     store = Store(tmp_path / "voice.sqlite3")
     store.update_settings("42", language="hy")
     requests = []
@@ -82,16 +82,15 @@ async def test_voice_audio_is_on_demand_and_limited(tmp_path):
         requests.append(json.loads(request.content))
         return httpx.Response(200, content=b"OggS-audio")
 
-    settings = Settings(_env_file=None, alisagpt_api_key="key", voice_daily_limit=1)
+    settings = Settings(_env_file=None, alisagpt_api_key="key")
     async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as upstream:
         assistant = Assistant(settings, store, upstream)
         assert await assistant.synthesize_voice("42", "Բարև։") == b"OggS-audio"
-        with pytest.raises(UserError, match="лимит"):
-            await assistant.synthesize_voice("42", "Կրկին։")
-    assert len(requests) == 1
+        assert await assistant.synthesize_voice("42", "Կրկին։") == b"OggS-audio"
+    assert len(requests) == 2
     assert requests[0]["response_format"] == "opus"
     assert "Armenian" in requests[0]["instructions"]
-    assert store.voice_usage("42") == 1
+    assert store.voice_usage("42") == 2
     store.db.close()
 
 
@@ -125,4 +124,3 @@ async def test_station_sends_non_russian_voice_to_telegram_in_background(tmp_pat
     assert store.voice_usage("42") == 1
     assert store.settings("42")["language"] == "ru"
     store.db.close()
-

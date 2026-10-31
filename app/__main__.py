@@ -7,7 +7,7 @@ from .telegram import run_bot
 
 async def bot():
     settings = Settings()
-    store = Store(settings.database_path, settings.default_model, settings.daily_limit)
+    store = Store(settings.database_path, settings.default_model)
     assistant = Assistant(settings, store)
     try:
         await run_bot(settings, store, assistant)
